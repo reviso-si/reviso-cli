@@ -11,13 +11,16 @@ agent's environment.
 
 ## Install
 
+Not on PyPI yet, so install from source:
+
 ```bash
-pip install reviso-cli
+pip install git+https://github.com/reviso-si/reviso-cli
 # or run it without installing
-uvx reviso-cli --help
+uvx --from git+https://github.com/reviso-si/reviso-cli reviso --help
 ```
 
-Installs the `reviso` command.
+Installs the `reviso` command. Once the package is published this becomes
+`pip install reviso-cli`.
 
 ## Quick start
 
