@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "reviso-cli"
-version = "0.1.0"
+version = "0.1.1"
 description = "Command line client for Reviso: publish drafts for human review, read reviewer comments back, and publish revisions safely."
 readme = "README.md"
 requires-python = ">=3.11"

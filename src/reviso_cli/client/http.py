@@ -5,6 +5,7 @@ import json
 import urllib.error
 import urllib.request
 from collections.abc import Callable
+from urllib.parse import urlsplit
 
 from .errors import raise_for_status
 
@@ -32,7 +33,8 @@ def request_json(base_url: str, key: str | None, method: str, path: str, *,
     if source in ("stdio", "hosted_mcp", "python_client"):
         req.add_header("X-Reviso-Client", source)
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+        with urllib.request.build_opener(CredentialRedirect).open(
+                req, timeout=TIMEOUT) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as e:
         # Do NOT truncate below MAX_ERROR_BODY: the body is usually the
@@ -57,3 +59,20 @@ def _headers(data: bytes | None, key: str | None,
     elif key:
         headers["Authorization"] = f"Bearer {key}"
     return headers
+
+
+class CredentialRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse a redirect that leaves the origin the request was sent to.
+
+    The default handler follows a redirect and carries the request headers with
+    it, so a 302 pointing at another host would hand that host the automation
+    key -- or a guest token -- in an Authorization header. A redirect that
+    changes scheme or host is far more likely to be an attack or a
+    misconfiguration than something this client needs, so it fails instead.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        before, after = urlsplit(req.full_url), urlsplit(newurl)
+        if (before.scheme, before.netloc) != (after.scheme, after.netloc):
+            raise urllib.error.URLError("cross-origin redirect refused")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
