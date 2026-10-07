@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "reviso-cli"
-version = "0.1.1"
+version = "0.1.2"
 description = "Command line client for Reviso: publish drafts for human review, read reviewer comments back, and publish revisions safely."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -27,6 +27,15 @@ dependencies = []
 
 [project.optional-dependencies]
 test = ["pytest>=8.0"]
+
+# PyPI renders these as the package page's links. Without them the page is a
+# dead end: someone who finds the package by search has no route to the docs,
+# the source, or the issue tracker.
+[project.urls]
+Homepage = "https://reviso.work"
+Documentation = "https://github.com/reviso-si/reviso-agent"
+Repository = "https://github.com/reviso-si/reviso-cli"
+Issues = "https://github.com/reviso-si/reviso-cli/issues"
 
 [project.scripts]
 reviso = "reviso_cli.cli:main"
