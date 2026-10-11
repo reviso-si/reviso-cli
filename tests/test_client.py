@@ -161,3 +161,51 @@ def test_invite_cli_formats_account_share_without_invite_id(server, existing, ca
     label = "account share updated" if existing else "shared with account"
     assert capsys.readouterr().out.strip() == f"{label}: test-grant"
     assert server.calls[-1]["body"] == {"email": "reader@example.test", "access": "comment"}
+
+
+@pytest.mark.parametrize("kind", [None, "document", "html_deck"])
+def test_publish_cli_preserves_explicit_document_kind(server, monkeypatch, tmp_path, kind):
+    from reviso_cli import cli
+
+    origin = f"http://127.0.0.1:{server.server_port}"
+    monkeypatch.setenv('REVISO_SERVER', origin)
+    monkeypatch.setenv('REVISO_AUTOMATION_KEY', 'test-automation')
+    monkeypatch.setenv('REVISO_STATE_DIR', str(tmp_path / 'state'))
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
+    server.routes['/api/documents'] = (201, {'document_id': 'doc_0123456789ab', 'version_id': 'ver_1'}, '')
+    file = tmp_path / 'presentation.html'
+    file.write_text('<div class="hr-deck">Test</div>' if kind == 'html_deck' else '<p>Ordinary HTML</p>')
+    args = ['publish', str(file), '--workspace-id', 'wsp_test']
+    if kind:
+        args += ['--kind', kind]
+    if kind == 'html_deck':
+        args += ['--deck-contract-version', 'html-deck/1']
+    cli.main(args)
+    call, = server.calls
+    assert call['method'] == 'POST' and call['path'] == '/api/documents'
+    assert call['body']['content'] == file.read_text()
+    assert call['body']['source_format'] == 'html'
+    assert call['body'].get('document_kind') == kind
+    assert call['body'].get('deck_contract_version') == ('html-deck/1' if kind == 'html_deck' else None)
+    mapping = json.loads((tmp_path / 'state/reviews/doc_0123456789ab.json').read_text())
+    assert mapping['base_server_version_id'] == 'ver_1'
+    assert mapping['url'] == origin + '/documents/0123456789ab'
+
+
+def test_publish_retries_bind_the_explicit_deck_kind(server, monkeypatch, tmp_path):
+    from reviso_cli import cli
+
+    monkeypatch.setenv('REVISO_SERVER', f'http://127.0.0.1:{server.server_port}')
+    monkeypatch.setenv('REVISO_AUTOMATION_KEY', 'test-automation')
+    monkeypatch.setenv('REVISO_STATE_DIR', str(tmp_path / 'state'))
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
+    server.routes['/api/documents'] = (400, {'error': {'code': 'VALIDATION_ERROR', 'message': 'rejected'}}, '')
+    file = tmp_path / 'deck.html'
+    file.write_text('<div class="hr-deck">Test</div>')
+    args = ['publish', str(file), '--workspace-id', 'wsp_test']
+    for flags in ([], ['--kind', 'html_deck'], ['--kind', 'html_deck']):
+        with pytest.raises(SystemExit, match='VALIDATION_ERROR'):
+            cli.main(args + flags)
+    plain, deck, retry = [call['body']['operation_id'] for call in server.calls]
+    assert plain != deck
+    assert deck == retry

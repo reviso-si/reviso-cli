@@ -109,3 +109,11 @@ The Reviso product itself is **not** open source. This repository covers the
 client only; it grants no rights to the service or its server software. See
 [VISIBILITY.md](VISIBILITY.md) for the boundary this repository holds, and
 [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
+
+Publish a presentation with its explicit kind so the server validates and renders it as slides:
+
+```bash
+reviso publish presentation.html --workspace-id <workspace-id> --kind html_deck --deck-contract-version html-deck/1
+```
+
+Ordinary HTML keeps `--kind document` (the default); deck markup without `html_deck` is rejected by the server.

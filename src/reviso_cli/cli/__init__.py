@@ -56,15 +56,18 @@ def cmd_publish(args: argparse.Namespace) -> None:
     content = path.read_text()
     fmt = format_file_arg(args, path)
     title = args.title or path.name
+    kind, contract = args.kind, args.deck_contract_version
+    options = {key: value for key, value in (("document_kind", kind), ("deck_contract_version", contract)) if value is not None}
     # A journaled operation_id is reused across reruns of THIS command, so a
     # crashed-then-rerun publish replays instead of double-creating. Cleared
     # only after every local success step has completed.
     parts = [title, content, fmt, args.description or "",
              scope.workspace_id, scope.parent_id]
+    if options: parts.extend([kind or "", contract or ""])
     op = command_journal.operation_id_for("publish", parts)
     result = _client().publish(title, content, fmt, args.description,
                                scope.workspace_id, scope.parent_id,
-                               operation_id=op)
+                               operation_id=op, **options)
     mapping = write_mapping(result, path)
     print(mapping["url"])
     command_journal.forget("publish", parts)
@@ -172,6 +175,8 @@ def _add_basic(sub: argparse._SubParsersAction) -> None:
     pub.add_argument("--description", default="Initial draft")
     pub.add_argument("--workspace-id", default="")
     pub.add_argument("--parent-id", default="")
+    pub.add_argument("--kind", choices=["document", "html_deck"])
+    pub.add_argument("--deck-contract-version")
     pub.set_defaults(func=cmd_publish)
     opn = sub.add_parser("open")
     opn.add_argument("document_id")
