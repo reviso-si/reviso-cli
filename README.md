@@ -24,7 +24,7 @@ pull a dependency graph into an agent's environment.
 
 ```bash
 reviso auth login --server https://reviso.work
-# set REVISO_AUTOMATION_KEY in the environment first, or pass --key
+# opens a browser for consent; use --no-browser to open the URL yourself
 reviso doctor --json
 
 reviso publish draft.md --title "Q3 launch plan" --description "Initial draft"
@@ -38,6 +38,19 @@ reviso update doc_abc123 revised.md \
   --description "Address reviewer feedback" \
   --base-version-id ver_xyz
 ```
+
+## Browser login
+
+Version 0.2 supports browser consent with a temporary loopback callback and PKCE.
+Keep the CLI running and open the login URL in a browser on the same computer.
+`reviso auth status` shows the selected server and login state without credentials;
+`reviso auth logout` removes that server's saved login. Revoke the connection in
+Settings → Integrations to end its server access.
+
+Credentials live in an owner-only file at `~/.config/reviso/credentials.json`
+(or under `XDG_CONFIG_HOME`), separately for each server, and refresh automatically.
+An existing `REVISO_AUTOMATION_KEY` or `--key` still supports headless use.
+The credential lock currently supports macOS and Linux.
 
 ## The rule that matters
 

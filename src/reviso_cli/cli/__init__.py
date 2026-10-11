@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 from pathlib import Path
 
 from .. import command_journal
@@ -16,6 +15,9 @@ from ..origin import DEFAULT_SERVER_URL
 from ..paths import config_path, packet_path, read_json, write_json
 from ..scope import resolve_agent_create_scope
 from .doctor import doctor_report, print_doctor
+from .auth import AuthenticatedClient, auth_command
+from .credentials import access_token, selected_server
+from .oauth_http import server_origin
 from .guest_comments import add_guest_comment_commands
 from .invites import add_invite_commands
 from .versions import add_version_commands, format_file_arg
@@ -33,38 +35,19 @@ def _load_config() -> dict:
 
 
 def _server_url() -> str:
-    cfg = _load_config()
-    return os.environ.get("REVISO_SERVER",
-                          cfg.get("server", DEFAULT_SERVER_URL))
+    return server_origin(selected_server(_load_config()) or DEFAULT_SERVER_URL)
 
 
 def _automation_key(cfg: dict) -> str:
-    return (os.environ.get("REVISO_AUTOMATION_KEY")
-            or cfg.get("automation_key", ""))
+    return access_token(_server_url(), cfg)
 
 
 def _client() -> RevisoClient:
-    return RevisoClient(_server_url(), _automation_key(_load_config()) or None)
+    return AuthenticatedClient(_server_url(), None, _load_config())
 
 
 def cmd_auth(args: argparse.Namespace) -> None:
-    if args.action == "login":
-        key = args.key or os.environ.get("REVISO_AUTOMATION_KEY", "")
-        server = args.server or os.environ.get("REVISO_SERVER",
-                                               DEFAULT_SERVER_URL)
-        if not key:
-            print("No automation key. Create one in Reviso under Settings -> "
-                  "Integrations, then set REVISO_AUTOMATION_KEY or pass --key.")
-            return
-        write_json(config_path(), {"server": server, "automation_key": key})
-        print(f"Saved to {config_path()}")
-    elif args.action == "status":
-        cfg = _load_config()
-        print(f"server: {cfg.get('server', '(not set)')}")
-        print(f"key: {'set' if cfg.get('automation_key') else '(not set)'}")
-        print(f"config: {config_path()}")
-    else:
-        print(f"unknown auth action: {args.action}")
+    auth_command(args, _load_config())
 
 
 def cmd_publish(args: argparse.Namespace) -> None:
@@ -172,14 +155,15 @@ def _workspace_scope(explicit: str = "", parent_id: str = ""):
     key = _automation_key(cfg)
     return resolve_agent_create_scope(
         explicit_workspace_id=explicit, explicit_parent_id=parent_id,
-        config=cfg, has_automation_key=key.startswith("rak_"))
+        config=cfg, has_automation_key=bool(key))
 
 
 def _add_basic(sub: argparse._SubParsersAction) -> None:
     auth = sub.add_parser("auth")
-    auth.add_argument("action", nargs="?", default="login")
+    auth.add_argument("action", nargs="?", default="login", choices=["login", "status", "logout"])
     auth.add_argument("--server")
     auth.add_argument("--key")
+    auth.add_argument("--no-browser", action="store_true", help="Print the login URL without opening a browser.")
     auth.set_defaults(func=cmd_auth)
     pub = sub.add_parser("publish")
     pub.add_argument("file")

@@ -1,7 +1,6 @@
 """Local mapping management — no Store imports, HTTP-only."""
 from __future__ import annotations
 
-import os
 import subprocess
 from pathlib import Path
 
@@ -12,14 +11,12 @@ from .paths import config_path, mapping_path, read_json, write_json
 
 
 def _server_url() -> str:
-    env = os.environ.get("REVISO_SERVER")
-    if env:
-        return env
-    cfg_path = config_path()
-    if cfg_path.exists():
-        cfg = read_json(cfg_path)
-        return cfg.get("server", DEFAULT_SERVER_URL)
-    return DEFAULT_SERVER_URL
+    from .cli.credentials import selected_server
+    from .cli.oauth_http import server_origin
+
+    path = config_path()
+    cfg = read_json(path) if path.exists() else {}
+    return server_origin(selected_server(cfg) or DEFAULT_SERVER_URL)
 
 
 def write_mapping(result: dict, file_path: Path) -> dict:
