@@ -47,7 +47,10 @@ def _create(args: argparse.Namespace,
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
         return
-    if result.get("existing"):
+    if result.get("account_shared"):
+        label = "account share updated" if result.get("existing") else "shared with account"
+        print(f"{label}: {result['grant_id']}")
+    elif result.get("existing"):
         print(f"pending invite already exists: {result['invite_id']}")
     else:
         print(result.get("invite_url") or result["invite_id"])

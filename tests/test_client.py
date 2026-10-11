@@ -146,3 +146,18 @@ def test_same_origin_redirect_is_still_followed(server):
     assert _client(server).health() == {"status": "ok"}
     assert [call["path"] for call in server.calls] == ["/healthz", "/moved"]
     assert server.calls[-1]["authorization"] == "Bearer rak_test"
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_invite_cli_formats_account_share_without_invite_id(server, existing, capsys):
+    from argparse import Namespace
+    from reviso_cli.cli.invites import _create
+
+    server.routes["/api/documents/doc_1/invites"] = (
+        200 if existing else 201,
+        {"account_shared": True, "review_id": "doc_1", "grant_id": "test-grant", "existing": existing}, "")
+    _create(Namespace(document_id="doc_1", email="reader@example.test", access="comment", json=False),
+            lambda: _client(server))
+    label = "account share updated" if existing else "shared with account"
+    assert capsys.readouterr().out.strip() == f"{label}: test-grant"
+    assert server.calls[-1]["body"] == {"email": "reader@example.test", "access": "comment"}
