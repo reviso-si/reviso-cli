@@ -36,7 +36,9 @@ class RevisoClient(CollabClientMixin, ParticipationClientMixin):
                 operation_id: str | None = None,
                 background: list[dict] | None = None,
                 document_kind: str | None = None,
-                deck_contract_version: str | None = None) -> dict:
+                deck_contract_version: str | None = None,
+                source_kind: str | None = None,
+                source_session_id: str | None = None) -> dict:
         # operation_id (P1c exactly-once) is NOT minted here: the client cannot
         # tell a fresh command from a transport retry. The command owner (CLI /
         # MCP) generates it once and reuses it across the retries of ONE publish.
@@ -53,6 +55,10 @@ class RevisoClient(CollabClientMixin, ParticipationClientMixin):
             body["document_kind"] = document_kind
         if deck_contract_version is not None:
             body["deck_contract_version"] = deck_contract_version
+        if source_kind is not None:
+            body["source_kind"] = source_kind
+        if source_session_id is not None:
+            body["source_session_id"] = source_session_id
         return self._request("POST", "/api/documents", body=body)
     def update(self, review_id: str, content: str, base_version_id: str,
                description: str, source_format: str | None = None,
