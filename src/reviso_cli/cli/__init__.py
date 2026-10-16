@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 from .. import command_journal
@@ -60,15 +61,27 @@ def cmd_publish(args: argparse.Namespace) -> None:
     options = {key: value for key, value in (("document_kind", kind), ("deck_contract_version", contract)) if value is not None}
     source_kind = getattr(args, "source_kind", None)
     source_session_id = getattr(args, "source_session_id", None)
-    if source_kind is not None: options["source_kind"] = source_kind
-    if source_session_id is not None: options["source_session_id"] = source_session_id
+    if not getattr(args, "no_source_binding", False) and source_kind is None and source_session_id is None:
+        # Default-on provenance: agent runtimes inject their session identity
+        # into the environment (DSH provides DSH_SESSION_ID). Bind by default;
+        # explicit flags or --no-source-binding always win.
+        for env_name, bound_kind in (("DSH_SESSION_ID", "dsh"),):
+            session_id = os.environ.get(env_name, "").strip()
+            if session_id:
+                source_kind, source_session_id = bound_kind, session_id
+                break
+    if source_kind is not None:
+        options["source_kind"] = source_kind
+    if source_session_id is not None:
+        options["source_session_id"] = source_session_id
     # A journaled operation_id is reused across reruns of THIS command, so a
     # crashed-then-rerun publish replays instead of double-creating. Cleared
     # only after every local success step has completed.
     parts = [title, content, fmt, args.description or "",
              scope.workspace_id, scope.parent_id]
-    if options: parts.extend([kind or "", contract or "",
-                              source_kind or "", source_session_id or ""])
+    if options:
+        parts.extend([kind or "", contract or "",
+                      source_kind or "", source_session_id or ""])
     op = command_journal.operation_id_for("publish", parts)
     result = _client().publish(title, content, fmt, args.description,
                                scope.workspace_id, scope.parent_id,
@@ -183,6 +196,7 @@ def _add_basic(sub: argparse._SubParsersAction) -> None:
     pub.add_argument("--kind", choices=["document", "html_deck"])
     pub.add_argument("--deck-contract-version")
     pub.add_argument("--source-kind", help="Provenance channel tag, e.g. 'dsh' for a DeepSeek Harness session.")
+    pub.add_argument("--no-source-binding", action="store_true", help="Skip the default session binding when the environment carries an agent session id.")
     pub.add_argument("--source-session-id", help="Session id within the source channel; enables session-scoped reads on the server.")
     pub.set_defaults(func=cmd_publish)
     opn = sub.add_parser("open")
