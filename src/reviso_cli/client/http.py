@@ -47,7 +47,9 @@ def request_json(base_url: str, key: str | None, method: str, path: str, *,
         raise_for_status(
             e.code, e.read(MAX_ERROR_BODY).decode("utf-8", errors="replace"))
     except urllib.error.URLError as e:
-        raise SystemExit(f"connection error: {e.reason}") from e
+        exc = SystemExit(f"unavailable: connection error: {e.reason}")
+        exc.error_class = "unavailable"
+        raise exc from e
 
 
 def _headers(data: bytes | None, key: str | None,

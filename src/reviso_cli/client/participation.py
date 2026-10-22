@@ -69,7 +69,9 @@ class ParticipationClientMixin:
             # raise_for_status, on the unstructured fallback only.
             raise_for_status(e.code, e.read().decode("utf-8", errors="replace"))
         except urllib.error.URLError as e:
-            raise SystemExit(f"connection error: {e.reason}") from e
+            exc = SystemExit(f"unavailable: connection error: {e.reason}")
+            exc.error_class = "unavailable"
+            raise exc from e
 
     def agent_comment(self, review_id: str, agent_name: str,
                       severity: str, body: str,
