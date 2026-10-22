@@ -99,12 +99,42 @@ def test_update_always_carries_the_base_version(server):
     assert call["body"]["base_version_id"] == "ver_1"
 
 
+def test_publish_rejects_unpaired_provenance(server):
+    with pytest.raises(ValueError, match="supplied together"):
+        _client(server).publish("Title", "# Body", source_kind="dsh")
+    assert server.calls == []
+
+
 def test_server_error_envelope_becomes_a_coded_failure(server):
     server.routes["/api/documents/doc_1/agent-update"] = (
         409, {"error": {"code": "CAS_CONFLICT", "message": "base_version_changed"}}, "")
     with pytest.raises(SystemExit) as excinfo:
         _client(server).update("doc_1", "# Body", "ver_stale", "Fix typo")
     assert "CAS_CONFLICT" in str(excinfo.value)
+
+
+def test_git_probe_scrubs_inherited_local_git_environment(monkeypatch, tmp_path):
+    from reviso_cli import local
+
+    captured = {}
+
+    class Result:
+        returncode = 0
+        stdout = ""
+
+    def run(command, **kwargs):
+        captured['command'] = command
+        captured['env'] = kwargs['env']
+        return Result()
+
+    monkeypatch.chdir(tmp_path)
+    for key in ('GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_CONFIG_GLOBAL'):
+        monkeypatch.setenv(key, 'hostile-value')
+    monkeypatch.setattr(local.subprocess, 'run', run)
+
+    assert local.git_dirty_summary() == 'clean'
+    assert captured['command'] == ['git', 'status', '--short']
+    assert not any(key.startswith('GIT_') for key in captured['env'])
 
 
 def test_client_has_no_share_link_surface():
@@ -190,6 +220,142 @@ def test_publish_cli_preserves_explicit_document_kind(server, monkeypatch, tmp_p
     mapping = json.loads((tmp_path / 'state/reviews/doc_0123456789ab.json').read_text())
     assert mapping['base_server_version_id'] == 'ver_1'
     assert mapping['url'] == origin + '/documents/0123456789ab'
+
+
+def test_publish_json_has_stable_metadata_and_legacy_output_is_url_only(server, monkeypatch, tmp_path, capsys):
+    from reviso_cli import cli
+
+    origin = f'http://127.0.0.1:{server.server_port}'
+    monkeypatch.setenv('REVISO_SERVER', origin)
+    monkeypatch.setenv('REVISO_AUTOMATION_KEY', 'test-automation')
+    monkeypatch.setenv('REVISO_STATE_DIR', str(tmp_path / 'state'))
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
+    monkeypatch.delenv('DSH_SESSION_ID', raising=False)
+    file = tmp_path / 'draft.md'
+    file.write_text('# Draft')
+
+    server.routes['/api/documents'] = (
+        201, {'document_id': 'doc_legacy123456', 'version_id': 'ver_1'}, '')
+    cli.main(['publish', str(file), '--workspace-id', 'wsp_arg'])
+    assert capsys.readouterr().out.strip() == origin + '/documents/doc_legacy123456'
+
+    server.routes['/api/documents'] = (
+        201, {'document_id': 'doc_0123456789ab', 'version_id': 'ver_1',
+              'workspace_id': 'wsp_server'}, '')
+    cli.main(['publish', str(file), '--workspace-id', 'wsp_arg', '--json'])
+    result = json.loads(capsys.readouterr().out)
+    assert result == {
+        'document_id': 'doc_0123456789ab',
+        'version_id': 'ver_1',
+        'workspace_id': 'wsp_server',
+        'review_url': origin + '/documents/0123456789ab',
+    }
+
+
+@pytest.mark.parametrize(
+    'flags, expected',
+    [
+        (['--source-kind', 'dsh'], 'together'),
+        (['--source-session-id', 'sess_1'], 'together'),
+        (['--no-source-binding', '--source-kind', 'dsh', '--source-session-id', 'sess_1'], 'cannot be combined'),
+    ],
+)
+def test_publish_cli_rejects_invalid_provenance_before_send(server, monkeypatch, tmp_path, flags, expected):
+    from reviso_cli import cli
+
+    monkeypatch.setenv('REVISO_SERVER', f'http://127.0.0.1:{server.server_port}')
+    monkeypatch.setenv('REVISO_AUTOMATION_KEY', 'test-automation')
+    monkeypatch.setenv('REVISO_STATE_DIR', str(tmp_path / 'state'))
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
+    monkeypatch.delenv('DSH_SESSION_ID', raising=False)
+    file = tmp_path / 'draft.md'
+    file.write_text('# Draft')
+    with pytest.raises(SystemExit, match=expected):
+        cli.main(['publish', str(file), '--workspace-id', 'wsp_test', *flags])
+    assert server.calls == []
+
+
+def test_publish_cli_pairs_explicit_provenance(server, monkeypatch, tmp_path):
+    from reviso_cli import cli
+
+    monkeypatch.setenv('REVISO_SERVER', f'http://127.0.0.1:{server.server_port}')
+    monkeypatch.setenv('REVISO_AUTOMATION_KEY', 'test-automation')
+    monkeypatch.setenv('REVISO_STATE_DIR', str(tmp_path / 'state'))
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
+    server.routes['/api/documents'] = (201, {'document_id': 'doc_0123456789ab', 'version_id': 'ver_1'}, '')
+    file = tmp_path / 'draft.md'
+    file.write_text('# Draft')
+    cli.main(['publish', str(file), '--workspace-id', 'wsp_test',
+              '--source-kind', 'dsh', '--source-session-id', 'sess_1'])
+    assert server.calls[-1]['body']['source_kind'] == 'dsh'
+    assert server.calls[-1]['body']['source_session_id'] == 'sess_1'
+
+
+def test_update_force_latest_journal_reuses_the_first_resolved_base(server, monkeypatch, tmp_path):
+    from reviso_cli import cli
+
+    monkeypatch.setenv('REVISO_SERVER', f'http://127.0.0.1:{server.server_port}')
+    monkeypatch.setenv('REVISO_AUTOMATION_KEY', 'test-automation')
+    monkeypatch.setenv('REVISO_STATE_DIR', str(tmp_path / 'state'))
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
+    file = tmp_path / 'draft.md'
+    file.write_text('# Revised')
+    server.routes['/api/documents/doc_1/latest-content'] = (200, {'version_id': 'ver_latest'}, '')
+    server.routes['/api/documents/doc_1/agent-update'] = (400, {'error': {'code': 'VALIDATION_ERROR', 'message': 'retry'}}, '')
+
+    for _ in range(2):
+        with pytest.raises(SystemExit, match='VALIDATION_ERROR'):
+            cli.main(['update', 'doc_1', str(file), '--description', 'Revise', '--force-latest'])
+
+    reads = [call for call in server.calls if call['path'].endswith('/latest-content')]
+    writes = [call for call in server.calls if call['path'].endswith('/agent-update')]
+    assert len(reads) == 1
+    assert len(writes) == 2
+    assert writes[0]['body']['base_version_id'] == 'ver_latest'
+    assert writes[0]['body']['operation_id'] == writes[1]['body']['operation_id']
+
+
+def test_update_cli_requires_base_without_force_and_force_reads_fresh_version(server, monkeypatch, tmp_path):
+    from reviso_cli import cli
+
+    monkeypatch.setenv('REVISO_SERVER', f'http://127.0.0.1:{server.server_port}')
+    monkeypatch.setenv('REVISO_AUTOMATION_KEY', 'test-automation')
+    monkeypatch.setenv('REVISO_STATE_DIR', str(tmp_path / 'state'))
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
+    file = tmp_path / 'draft.md'
+    file.write_text('# Revised')
+    server.routes['/api/documents/doc_1/latest-content'] = (200, {'version_id': 'ver_latest'}, '')
+    server.routes['/api/documents/doc_1/agent-update'] = (200, {'version_id': 'ver_next'}, '')
+
+    with pytest.raises(SystemExit, match='--base-version-id is required'):
+        cli.main(['update', 'doc_1', str(file), '--description', 'Revise'])
+    assert server.calls == []
+
+    cli.main(['update', 'doc_1', str(file), '--description', 'Revise', '--force-latest'])
+    assert [call['path'] for call in server.calls] == [
+        '/api/documents/doc_1/latest-content',
+        '/api/documents/doc_1/agent-update',
+    ]
+    assert server.calls[-1]['body']['base_version_id'] == 'ver_latest'
+
+
+def test_rollback_cli_requires_base_and_sends_explicit_cas(server, monkeypatch, tmp_path):
+    from reviso_cli import cli
+
+    monkeypatch.setenv('REVISO_SERVER', f'http://127.0.0.1:{server.server_port}')
+    monkeypatch.setenv('REVISO_AUTOMATION_KEY', 'test-automation')
+    monkeypatch.setenv('REVISO_STATE_DIR', str(tmp_path / 'state'))
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
+    server.routes['/api/documents/doc_1/rollback'] = (200, {'version_id': 'ver_next'}, '')
+
+    with pytest.raises(SystemExit, match='--base-version-id is required'):
+        cli.main(['rollback', 'doc_1', 'ver_1', '--description', 'Restore'])
+    assert server.calls == []
+
+    cli.main(['rollback', 'doc_1', 'ver_1', '--description', 'Restore',
+              '--base-version-id', 'ver_latest'])
+    assert [call['path'] for call in server.calls] == ['/api/documents/doc_1/rollback']
+    assert server.calls[-1]['body']['base_version_id'] == 'ver_latest'
 
 
 def test_publish_retries_bind_the_explicit_deck_kind(server, monkeypatch, tmp_path):

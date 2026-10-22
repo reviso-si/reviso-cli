@@ -1,6 +1,7 @@
 """Local mapping management — no Store imports, HTTP-only."""
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -38,10 +39,20 @@ def read_mapping(review_id: str) -> dict:
     return read_json(mapping_path(review_id))
 
 
+def git_env(environ: dict | None = None) -> dict:
+    """Return the process environment without inherited Git control variables."""
+    env = dict(os.environ if environ is None else environ)
+    for key in tuple(env):
+        if key.startswith("GIT_"):
+            env.pop(key, None)
+    return env
+
+
 def git_dirty_summary() -> str:
     try:
         result = subprocess.run(["git", "status", "--short"],
-                                capture_output=True, text=True, check=False)
+                                capture_output=True, text=True, check=False,
+                                env=git_env())
     except OSError:
         return "git unavailable"
     if result.returncode != 0:

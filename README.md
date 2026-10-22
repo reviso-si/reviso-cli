@@ -29,6 +29,8 @@ reviso doctor --json
 
 reviso publish draft.md --title "Q3 launch plan" --description "Initial draft"
 # prints the document URL
+reviso publish draft.md --title "Q3 launch plan" --json
+# prints document_id, version_id, workspace_id, and review_url
 
 reviso documents --json                 # find the document id
 reviso packet doc_abc123 --format json  # reviewer comments and version metadata
@@ -54,19 +56,23 @@ The credential lock currently supports macOS and Linux.
 
 ## The rule that matters
 
-**Always pass `--base-version-id` when you revise a document.**
+**`update` and `rollback` require `--base-version-id`.**
 
-Omitting it is not a safe default. Without it the command re-bases onto whatever
-version is newest and lets your write win, which silently discards a human's
-concurrent edit. The safe shape is always two steps:
+The base is the version you actually read. Without it, a write could silently
+discard a human's concurrent edit, so the CLI fails before contacting the server.
+The safe shape is two steps:
 
 ```bash
 reviso versions <document_id>        # take the newest version_id
 reviso update <document_id> file --description "..." --base-version-id <ver_...>
+reviso rollback <document_id> <target_version_id> \
+  --description "..." --base-version-id <ver_...>
 ```
 
-If the write is rejected as a conflict, re-read and re-apply your change on top of
-the human's edit. Do not retry with the flag removed.
+If a write is rejected as a conflict, re-read and re-apply your change on top of
+the human's edit. `--force-latest` is the explicit last-writer-wins opt-in: it
+performs one fresh read and uses that version as the base. It cannot be combined
+with `--base-version-id`.
 
 ## Command groups
 
@@ -93,13 +99,18 @@ If you need MCP tools rather than a shell, the hosted connector is the better
 path in most hosts. See [reviso-agent](https://github.com/reviso-si/reviso-agent)
 for the agent skill.
 
-## Known limitations
+## Provenance
 
-- `publish` prints only the document URL. It does not return the document id, so
-  use `reviso documents --json` to continue from the id.
-- `update` and `rollback` accept an omitted base version and fall back to
-  last-writer-wins. Always pass the flag. A future release should make the safe
-  behaviour the default.
+Publishing from an agent runtime binds provenance automatically when the runtime
+exposes `DSH_SESSION_ID`. You can pass an explicit pair instead:
+
+```bash
+reviso publish draft.md --source-kind dsh --source-session-id <session_id>
+```
+
+`--source-kind` and `--source-session-id` must be supplied together. Use
+`--no-source-binding` for an intentional no-source publish; it cannot be combined
+with either provenance flag.
 
 ## License
 

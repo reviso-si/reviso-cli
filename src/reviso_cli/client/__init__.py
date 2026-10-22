@@ -39,6 +39,9 @@ class RevisoClient(CollabClientMixin, ParticipationClientMixin):
                 deck_contract_version: str | None = None,
                 source_kind: str | None = None,
                 source_session_id: str | None = None) -> dict:
+        if (source_kind is None) != (source_session_id is None):
+            raise ValueError(
+                "source_kind and source_session_id must be supplied together")
         # operation_id (P1c exactly-once) is NOT minted here: the client cannot
         # tell a fresh command from a transport retry. The command owner (CLI /
         # MCP) generates it once and reuses it across the retries of ONE publish.

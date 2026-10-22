@@ -59,20 +59,9 @@ def cmd_publish(args: argparse.Namespace) -> None:
     title = args.title or path.name
     kind, contract = args.kind, args.deck_contract_version
     options = {key: value for key, value in (("document_kind", kind), ("deck_contract_version", contract)) if value is not None}
-    source_kind = getattr(args, "source_kind", None)
-    source_session_id = getattr(args, "source_session_id", None)
-    if not getattr(args, "no_source_binding", False) and source_kind is None and source_session_id is None:
-        # Default-on provenance: agent runtimes inject their session identity
-        # into the environment (DSH provides DSH_SESSION_ID). Bind by default;
-        # explicit flags or --no-source-binding always win.
-        for env_name, bound_kind in (("DSH_SESSION_ID", "dsh"),):
-            session_id = os.environ.get(env_name, "").strip()
-            if session_id:
-                source_kind, source_session_id = bound_kind, session_id
-                break
+    source_kind, source_session_id = _source_binding(args)
     if source_kind is not None:
         options["source_kind"] = source_kind
-    if source_session_id is not None:
         options["source_session_id"] = source_session_id
     # A journaled operation_id is reused across reruns of THIS command, so a
     # crashed-then-rerun publish replays instead of double-creating. Cleared
@@ -87,8 +76,42 @@ def cmd_publish(args: argparse.Namespace) -> None:
                                scope.workspace_id, scope.parent_id,
                                operation_id=op, **options)
     mapping = write_mapping(result, path)
-    print(mapping["url"])
+    if getattr(args, "json", False):
+        print(json.dumps({
+            "document_id": mapping["document_id"],
+            "version_id": mapping["base_server_version_id"],
+            "workspace_id": result.get("workspace_id", scope.workspace_id),
+            "review_url": mapping["url"],
+        }, indent=2, sort_keys=True))
+    else:
+        print(mapping["url"])
     command_journal.forget("publish", parts)
+
+
+def _source_binding(args: argparse.Namespace) -> tuple[str | None, str | None]:
+    source_kind = getattr(args, "source_kind", None)
+    source_session_id = getattr(args, "source_session_id", None)
+    no_source = getattr(args, "no_source_binding", False)
+    if no_source:
+        if source_kind is not None or source_session_id is not None:
+            raise ValidationError(
+                "--no-source-binding cannot be combined with --source-kind or "
+                "--source-session-id")
+        return None, None
+    if (source_kind is None) != (source_session_id is None):
+        raise ValidationError(
+            "--source-kind and --source-session-id must be supplied together")
+    if source_kind is not None:
+        source_kind = source_kind.strip()
+        source_session_id = source_session_id.strip()
+        if not source_kind or not source_session_id:
+            raise ValidationError(
+                "--source-kind and --source-session-id cannot be empty")
+        return source_kind, source_session_id
+    # Default-on provenance: agent runtimes inject their session identity into
+    # the environment (DSH provides DSH_SESSION_ID).
+    session_id = os.environ.get("DSH_SESSION_ID", "").strip()
+    return ("dsh", session_id) if session_id else (None, None)
 
 
 def cmd_open(args: argparse.Namespace) -> None:
@@ -198,6 +221,7 @@ def _add_basic(sub: argparse._SubParsersAction) -> None:
     pub.add_argument("--source-kind", help="Provenance channel tag, e.g. 'dsh' for a DeepSeek Harness session.")
     pub.add_argument("--no-source-binding", action="store_true", help="Skip the default session binding when the environment carries an agent session id.")
     pub.add_argument("--source-session-id", help="Session id within the source channel; enables session-scoped reads on the server.")
+    pub.add_argument("--json", action="store_true", help="Print document_id, version_id, workspace_id, and review_url as JSON.")
     pub.set_defaults(func=cmd_publish)
     opn = sub.add_parser("open")
     opn.add_argument("document_id")
@@ -283,4 +307,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
-    args.func(args)
+    try:
+        args.func(args)
+    except ValidationError as exc:
+        raise SystemExit(str(exc)) from exc

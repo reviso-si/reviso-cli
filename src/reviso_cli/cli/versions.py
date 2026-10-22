@@ -8,11 +8,35 @@ from pathlib import Path
 from .. import command_journal
 
 
+def _base_choice(args: argparse.Namespace) -> str:
+    explicit = (args.base_version_id or "").strip()
+    force_latest = getattr(args, "force_latest", False)
+    if explicit and force_latest:
+        raise SystemExit(
+            "--base-version-id and --force-latest are mutually exclusive")
+    if not explicit and not force_latest:
+        raise SystemExit(
+            "--base-version-id is required for this write; read the current "
+            "version with `reviso versions <document_id>` and pass it. Use "
+            "--force-latest only when last-writer-wins is intentional.")
+    return explicit
+
+
+def _base_version(args: argparse.Namespace, client) -> str:
+    explicit = _base_choice(args)
+    if explicit:
+        return explicit
+    return client.latest_content(args.document_id)["version_id"]
+
+
 def cmd_update(args: argparse.Namespace) -> None:
     path = Path(args.file)
     client = args.client_factory()
     content = path.read_text()
     fmt = format_file_arg(args, path)
+    # Reject a missing/exclusive base before journal reservation; force-latest
+    # resolves once inside reserve() and that concrete base is replayed on retry.
+    _base_choice(args)
     # Journal key is USER inputs only -- NOT the dynamically resolved latest, so
     # a rerun after a lost response does not drift onto the version the first run
     # just committed. The concrete base resolved on first run is replayed via the
@@ -21,9 +45,7 @@ def cmd_update(args: argparse.Namespace) -> None:
              args.agent_name or "", args.base_version_id or ""]
 
     def resolve() -> dict:
-        base = (args.base_version_id
-                or client.latest_content(args.document_id)["version_id"])
-        return {"base_version_id": base}
+        return {"base_version_id": _base_version(args, client)}
 
     entry = command_journal.reserve("update", parts, resolve=resolve)
     op = entry["operation_id"]
@@ -52,7 +74,7 @@ def cmd_diff(args: argparse.Namespace) -> None:
 
 def cmd_rollback(args: argparse.Namespace) -> None:
     client = args.client_factory()
-    base = args.base_version_id or client.latest_content(args.document_id)["version_id"]
+    base = _base_version(args, client)
     result = client.rollback(args.document_id, args.target_version_id, base,
                              args.description)
     print(json.dumps(result, indent=2, sort_keys=True))
@@ -62,7 +84,8 @@ def add_version_commands(sub: argparse._SubParsersAction, client_factory) -> Non
     upd = sub.add_parser("update")
     upd.add_argument("document_id"); upd.add_argument("file")
     upd.add_argument("--description", required=True)
-    upd.add_argument("--base-version-id", help="Version to base the update on (CAS). Omit to auto-base on the latest version (last-writer-wins); pass it for documents others are editing.")
+    upd.add_argument("--base-version-id", help="Version the update was based on (required for CAS).")
+    upd.add_argument("--force-latest", action="store_true", help="Explicitly read the latest version and allow last-writer-wins.")
     upd.add_argument("--format", choices=["markdown", "md", "html"])
     upd.add_argument("--agent-name", default="Agent")
     upd.set_defaults(func=cmd_update, client_factory=client_factory)
@@ -76,7 +99,8 @@ def add_version_commands(sub: argparse._SubParsersAction, client_factory) -> Non
     rb = sub.add_parser("rollback")
     rb.add_argument("document_id"); rb.add_argument("target_version_id")
     rb.add_argument("--description", required=True)
-    rb.add_argument("--base-version-id")
+    rb.add_argument("--base-version-id", help="Version the rollback was based on (required for CAS).")
+    rb.add_argument("--force-latest", action="store_true", help="Explicitly read the latest version and allow last-writer-wins.")
     rb.set_defaults(func=cmd_rollback, client_factory=client_factory)
 
 

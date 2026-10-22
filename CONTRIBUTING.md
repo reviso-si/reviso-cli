@@ -14,8 +14,10 @@ focused and public-safe.
   cheaply.
 - Do not add secrets, keys, or real tokens, including expired or obviously fake
   ones: a token prefix is itself information.
-- Do not weaken the base-version behaviour. Sending a write without the version
-  the agent read is the failure this client exists to make visible.
+- Do not weaken the base-version behaviour. CLI `update` and `rollback` require
+  `--base-version-id`; `--force-latest` must remain an explicit opt-in. Sending a
+  write without the version the agent read is the failure this client exists to
+  make visible.
 
 ## Tests
 
