@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from .document_route_keys import public_document_path
 from .origin import DEFAULT_SERVER_URL
@@ -20,11 +21,25 @@ def _server_url() -> str:
     return server_origin(selected_server(cfg) or DEFAULT_SERVER_URL)
 
 
+def _canonical_review_url(result: dict, review_id: str) -> str:
+    server = _server_url()
+    explicit = str(result.get("review_url") or "")
+    if explicit:
+        candidate = urlsplit(explicit)
+        expected = urlsplit(server)
+        if candidate.scheme not in ("http", "https") or not candidate.netloc:
+            raise ValueError("review_url must be an absolute HTTP(S) URL")
+        if (candidate.scheme, candidate.netloc) != (expected.scheme, expected.netloc):
+            raise ValueError("review_url origin does not match the selected Reviso server")
+        return explicit
+    return f"{server}{public_document_path(review_id)}"
+
+
 def write_mapping(result: dict, file_path: Path) -> dict:
     review_id = result["document_id"]
     mapping = {
         "document_id": review_id,
-        "url": f"{_server_url()}{public_document_path(review_id)}",
+        "url": _canonical_review_url(result, review_id),
         "local_path": str(file_path.resolve()),
         "repo_root": str(Path.cwd().resolve()),
         "base_server_version_id": result.get("version_id", ""),
