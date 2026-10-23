@@ -169,11 +169,24 @@ def test_key_login_validates_and_saves_selected_origin(monkeypatch, server):
 
 
 
-def test_mapping_uses_the_same_saved_origin_as_authenticated_commands(tmp_path):
+def test_mapping_preserves_server_supplied_product_origin(tmp_path):
     from reviso_cli.local import write_mapping
 
     credentials.save_login(SERVER, saved(expires_at=time.time() + 3600))
     source = tmp_path / 'draft.md'
     source.write_text('draft')
-    mapping = write_mapping({'document_id': 'doc_aaaaaaaaaaaa', 'version_id': 'v1'}, source)
-    assert mapping['url'] == SERVER + '/documents/aaaaaaaaaaaa'
+    mapping = write_mapping({
+        'document_id': 'doc_aaaaaaaaaaaa', 'version_id': 'v1',
+        'review_url': 'https://product.example.test/documents/aaaaaaaaaaaa',
+    }, source)
+    assert mapping['url'] == (
+        'https://product.example.test/documents/aaaaaaaaaaaa')
+
+
+def test_mapping_fails_closed_without_server_review_url(tmp_path):
+    from reviso_cli.local import write_mapping
+
+    source = tmp_path / 'draft.md'
+    source.write_text('draft')
+    with pytest.raises(cli.ValidationError, match='canonical absolute review_url'):
+        write_mapping({'document_id': 'doc_aaaaaaaaaaaa', 'version_id': 'v1'}, source)

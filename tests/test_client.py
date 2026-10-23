@@ -202,7 +202,7 @@ def test_publish_cli_preserves_explicit_document_kind(server, monkeypatch, tmp_p
     monkeypatch.setenv('REVISO_AUTOMATION_KEY', 'test-automation')
     monkeypatch.setenv('REVISO_STATE_DIR', str(tmp_path / 'state'))
     monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
-    server.routes['/api/documents'] = (201, {'document_id': 'doc_0123456789ab', 'version_id': 'ver_1'}, '')
+    server.routes['/api/documents'] = (201, {'document_id': 'doc_0123456789ab', 'version_id': 'ver_1', 'review_url': origin + '/documents/0123456789ab'}, '')
     file = tmp_path / 'presentation.html'
     file.write_text('<div class="hr-deck">Test</div>' if kind == 'html_deck' else '<p>Ordinary HTML</p>')
     args = ['publish', str(file), '--workspace-id', 'wsp_test']
@@ -235,13 +235,15 @@ def test_publish_json_has_stable_metadata_and_legacy_output_is_url_only(server, 
     file.write_text('# Draft')
 
     server.routes['/api/documents'] = (
-        201, {'document_id': 'doc_legacy123456', 'version_id': 'ver_1'}, '')
+        201, {'document_id': 'doc_legacy123456', 'version_id': 'ver_1',
+              'review_url': origin + '/documents/legacy123456'}, '')
     cli.main(['publish', str(file), '--workspace-id', 'wsp_arg'])
-    assert capsys.readouterr().out.strip() == origin + '/documents/doc_legacy123456'
+    assert capsys.readouterr().out.strip() == origin + '/documents/legacy123456'
 
     server.routes['/api/documents'] = (
         201, {'document_id': 'doc_0123456789ab', 'version_id': 'ver_1',
-              'workspace_id': 'wsp_server'}, '')
+              'workspace_id': 'wsp_server',
+              'review_url': origin + '/documents/0123456789ab'}, '')
     cli.main(['publish', str(file), '--workspace-id', 'wsp_arg', '--json'])
     result = json.loads(capsys.readouterr().out)
     assert result == {
@@ -250,6 +252,50 @@ def test_publish_json_has_stable_metadata_and_legacy_output_is_url_only(server, 
         'workspace_id': 'wsp_server',
         'review_url': origin + '/documents/0123456789ab',
     }
+
+
+def test_open_uses_saved_server_canonical_url_not_api_origin(
+        server, monkeypatch, tmp_path, capsys):
+    from reviso_cli import cli
+    from reviso_cli.local import write_mapping
+
+    origin = f'http://127.0.0.1:{server.server_port}'
+    monkeypatch.setenv('REVISO_SERVER', origin)
+    monkeypatch.setenv('REVISO_AUTOMATION_KEY', 'test-automation')
+    monkeypatch.setenv('REVISO_STATE_DIR', str(tmp_path / 'state'))
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
+    source = tmp_path / 'draft.md'
+    source.write_text('# Draft')
+    product_url = 'https://product.example.test/documents/aaaaaaaaaaaa'
+    write_mapping({
+        'document_id': 'doc_aaaaaaaaaaaa', 'version_id': 'ver_1',
+        'review_url': product_url,
+    }, source)
+
+    cli.main(['open', 'doc_aaaaaaaaaaaa'])
+
+    assert capsys.readouterr().out.strip() == product_url
+    assert server.calls == []
+
+
+def test_open_fetches_server_canonical_url_when_mapping_is_absent(
+        server, monkeypatch, tmp_path, capsys):
+    from reviso_cli import cli
+
+    origin = f'http://127.0.0.1:{server.server_port}'
+    monkeypatch.setenv('REVISO_SERVER', origin)
+    monkeypatch.setenv('REVISO_AUTOMATION_KEY', 'test-automation')
+    monkeypatch.setenv('REVISO_STATE_DIR', str(tmp_path / 'state'))
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
+    product_url = 'https://product.example.test/documents/0123456789ab'
+    server.routes['/api/documents/doc_0123456789ab/status'] = (
+        200, {'document_id': 'doc_0123456789ab', 'review_url': product_url}, '')
+
+    cli.main(['open', 'doc_0123456789ab'])
+
+    assert capsys.readouterr().out.strip() == product_url
+    assert [call['path'] for call in server.calls] == [
+        '/api/documents/doc_0123456789ab/status']
 
 
 @pytest.mark.parametrize(
@@ -278,11 +324,12 @@ def test_publish_cli_rejects_invalid_provenance_before_send(server, monkeypatch,
 def test_publish_cli_pairs_explicit_provenance(server, monkeypatch, tmp_path):
     from reviso_cli import cli
 
-    monkeypatch.setenv('REVISO_SERVER', f'http://127.0.0.1:{server.server_port}')
+    origin = f'http://127.0.0.1:{server.server_port}'
+    monkeypatch.setenv('REVISO_SERVER', origin)
     monkeypatch.setenv('REVISO_AUTOMATION_KEY', 'test-automation')
     monkeypatch.setenv('REVISO_STATE_DIR', str(tmp_path / 'state'))
     monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
-    server.routes['/api/documents'] = (201, {'document_id': 'doc_0123456789ab', 'version_id': 'ver_1'}, '')
+    server.routes['/api/documents'] = (201, {'document_id': 'doc_0123456789ab', 'version_id': 'ver_1', 'review_url': origin + '/documents/0123456789ab'}, '')
     file = tmp_path / 'draft.md'
     file.write_text('# Draft')
     cli.main(['publish', str(file), '--workspace-id', 'wsp_test',

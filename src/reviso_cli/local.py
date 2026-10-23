@@ -6,40 +6,31 @@ import subprocess
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from .document_route_keys import public_document_path
-from .origin import DEFAULT_SERVER_URL
+from .errors import ValidationError
 from .ids import sha256_text
-from .paths import config_path, mapping_path, read_json, write_json
+from .paths import mapping_path, read_json, write_json
 
 
-def _server_url() -> str:
-    from .cli.credentials import selected_server
-    from .cli.oauth_http import server_origin
+def canonical_review_url(result: dict) -> str:
+    """Return the server-supplied URL without deriving a new one.
 
-    path = config_path()
-    cfg = read_json(path) if path.exists() else {}
-    return server_origin(selected_server(cfg) or DEFAULT_SERVER_URL)
-
-
-def _canonical_review_url(result: dict, review_id: str) -> str:
-    server = _server_url()
-    explicit = str(result.get("review_url") or "")
-    if explicit:
-        candidate = urlsplit(explicit)
-        expected = urlsplit(server)
-        if candidate.scheme not in ("http", "https") or not candidate.netloc:
-            raise ValueError("review_url must be an absolute HTTP(S) URL")
-        if (candidate.scheme, candidate.netloc) != (expected.scheme, expected.netloc):
-            raise ValueError("review_url origin does not match the selected Reviso server")
-        return explicit
-    return f"{server}{public_document_path(review_id)}"
+    The server owns the canonical product origin and route. Host aliases,
+    proxies, and an embed host that differs from the API origin make local URL
+    construction incorrect, so absent or malformed values fail closed.
+    """
+    value = str(result.get("review_url") or "")
+    candidate = urlsplit(value)
+    if candidate.scheme not in ("http", "https") or not candidate.netloc:
+        raise ValidationError(
+            "server did not return a canonical absolute review_url")
+    return value
 
 
 def write_mapping(result: dict, file_path: Path) -> dict:
     review_id = result["document_id"]
     mapping = {
         "document_id": review_id,
-        "url": _canonical_review_url(result, review_id),
+        "url": canonical_review_url(result),
         "local_path": str(file_path.resolve()),
         "repo_root": str(Path.cwd().resolve()),
         "base_server_version_id": result.get("version_id", ""),

@@ -8,10 +8,9 @@ from pathlib import Path
 
 from .. import command_journal
 from ..client import RevisoClient
-from ..document_route_keys import public_document_path
 from ..document_search import search_documents
 from ..errors import ValidationError
-from ..local import read_mapping, write_mapping  # noqa: F401
+from ..local import canonical_review_url, read_mapping, write_mapping
 from ..origin import DEFAULT_SERVER_URL
 from ..paths import config_path, packet_path, read_json, write_json
 from ..scope import resolve_agent_create_scope
@@ -115,7 +114,14 @@ def _source_binding(args: argparse.Namespace) -> tuple[str | None, str | None]:
 
 
 def cmd_open(args: argparse.Namespace) -> None:
-    print(f"{_server_url()}{public_document_path(args.document_id)}")
+    try:
+        saved = read_mapping(args.document_id)
+    except FileNotFoundError:
+        saved = {}
+    if saved.get("url"):
+        print(canonical_review_url({"review_url": saved["url"]}))
+        return
+    print(canonical_review_url(_client().status(args.document_id)))
 
 
 def cmd_status(args: argparse.Namespace) -> None:
