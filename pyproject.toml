@@ -26,7 +26,7 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-test = ["pytest>=8.0"]
+test = ["pytest>=8.0", "ruff>=0.15.6,<0.16"]
 
 # PyPI renders these as the package page's links. Without them the page is a
 # dead end: someone who finds the package by search has no route to the docs,

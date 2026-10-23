@@ -9,7 +9,8 @@ from typing import Callable
 def add_guest_comment_commands(sub: argparse._SubParsersAction,
                                client_factory: Callable) -> None:
     guest = sub.add_parser("guest")
-    guest.add_argument("document_id"); guest.add_argument("--name", required=True)
+    guest.add_argument("document_id")
+    guest.add_argument("--name", required=True)
     guest.add_argument("--email")
     guest.set_defaults(func=lambda a: cmd_guest(a, client_factory))
     comment = sub.add_parser("comment")

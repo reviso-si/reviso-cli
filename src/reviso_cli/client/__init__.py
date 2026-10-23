@@ -151,7 +151,8 @@ class RevisoClient(CollabClientMixin, ParticipationClientMixin):
         params = []
         if version != "1":
             params.append(f"v={version}")
-        if thread_ids: params.extend(f"thread_id={tid}" for tid in thread_ids)
+        if thread_ids:
+            params.extend(f"thread_id={tid}" for tid in thread_ids)
         if params:
             path = f"{path}?{'&'.join(params)}"
         return self._request("GET", path)
