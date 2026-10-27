@@ -1,9 +1,9 @@
 """Workspace scope resolution for create and import.
 
-A create needs a workspace. Prefer an explicit value, then the environment, then
-the saved config. When an account-scoped key is in play the server resolves a
-default from the account's memberships, so an empty workspace is passed through
-instead of failing here.
+A create needs a workspace. Prefer an explicit value, then the environment,
+then the saved config, then the DSH host file. When an account-scoped key is
+in play the server resolves a default from the account's memberships, so an
+empty workspace is passed through instead of failing here.
 """
 from __future__ import annotations
 
@@ -27,6 +27,7 @@ def resolve_agent_create_scope(
     env: dict | None = None,
     config: dict | None = None,
     automation_workspace_id: str = "",
+    dsh_workspace_id: str = "",
     has_automation_key: bool = False,
 ) -> CreateScope:
     env = env or os.environ
@@ -35,6 +36,7 @@ def resolve_agent_create_scope(
         ("argument", explicit_workspace_id),
         ("env", env.get("REVISO_WORKSPACE_ID", "")),
         ("config", config.get("workspace_id", "")),
+        ("dsh_host", dsh_workspace_id),
     ]
     for source, value in candidates:
         workspace_id = str(value or "").strip()

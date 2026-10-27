@@ -2,7 +2,9 @@
 import os
 import time
 
+from ..origin import DEFAULT_SERVER_URL
 from .credential_file import credential_lock, read_credentials, write_credentials
+from .dsh_credentials import SERVER_REF, TOKEN_REF, read_dsh_refs
 from .oauth_http import OAuthFailure, oauth_json, server_origin
 
 LOGIN_HINT = "Run reviso auth login --server https://reviso.work (or your configured server)."
@@ -11,7 +13,8 @@ LOGIN_HINT = "Run reviso auth login --server https://reviso.work (or your config
 def server_sources(legacy: dict, explicit: str = "") -> dict:
     return {"argument": explicit or "", "environment": os.environ.get("REVISO_SERVER", ""),
             "project_config": legacy.get("server", ""),
-            "user_config": read_credentials().get("server", "")}
+            "user_config": read_credentials().get("server", ""),
+            "dsh_host": dsh_server()}
 
 
 def selected_server(legacy: dict, explicit: str = "") -> str:
@@ -23,13 +26,39 @@ def legacy_token(legacy: dict, server: str) -> str:
     return legacy.get("automation_key", "") if bound == server.rstrip("/") else ""
 
 
+def dsh_server() -> str:
+    """The origin the DSH host recorded, normalized; '' when absent or invalid."""
+    value = read_dsh_refs().get(SERVER_REF, "")
+    if not value:
+        return ""
+    try:
+        return server_origin(value)
+    except ValueError:
+        return ""
+
+
+def dsh_token(server: str) -> str:
+    """Token from the DSH host file, usable only on its paired origin.
+
+    The host stores one connection's refs together; when the file records no
+    origin the token pairs with the hosted default, mirroring the host's own
+    fallback. It is never handed to a different origin.
+    """
+    refs = read_dsh_refs()
+    token = refs.get(TOKEN_REF, "")
+    if not token:
+        return ""
+    paired = dsh_server() or DEFAULT_SERVER_URL
+    return token if server.rstrip("/") == paired else ""
+
+
 def access_token(server: str, legacy: dict) -> str:
     explicit = os.environ.get("REVISO_AUTOMATION_KEY")
     if explicit:
         return explicit
     server = server.rstrip("/")
     if server not in read_credentials().get("servers", {}):
-        return legacy_token(legacy, server)
+        return legacy_token(legacy, server) or dsh_token(server)
     with credential_lock():
         data = read_credentials()
         entry = data.get("servers", {}).get(server, {})

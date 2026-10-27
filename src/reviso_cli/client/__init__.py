@@ -8,6 +8,40 @@ from .http import request_json
 from .participation import ParticipationClientMixin
 
 
+def publish_request_body(title: str, content: str,
+                         source_format: str = "markdown",
+                         description: str = "Initial draft",
+                         workspace_id: str = "",
+                         parent_id: str = "",
+                         operation_id: str | None = None,
+                         background: list[dict] | None = None,
+                         document_kind: str | None = None,
+                         deck_contract_version: str | None = None,
+                         source_kind: str | None = None,
+                         source_session_id: str | None = None) -> dict:
+    # The exact JSON body a publish sends. Callers that need to reason about
+    # the request before it is sent (the CLI size preflight) build this same
+    # object instead of re-deriving it.
+    body = {"title": title, "content": content,
+            "source_format": source_format,
+            "description": description,
+            "workspace_id": workspace_id,
+            "parent_id": parent_id}
+    if operation_id is not None:
+        body["operation_id"] = operation_id
+    if background is not None:
+        body["background"] = background
+    if document_kind is not None:
+        body["document_kind"] = document_kind
+    if deck_contract_version is not None:
+        body["deck_contract_version"] = deck_contract_version
+    if source_kind is not None:
+        body["source_kind"] = source_kind
+    if source_session_id is not None:
+        body["source_session_id"] = source_session_id
+    return body
+
+
 class RevisoClient(CollabClientMixin, ParticipationClientMixin):
     def __init__(self, server_url: str,
                  owner_api_key: str | None = None):
@@ -45,23 +79,10 @@ class RevisoClient(CollabClientMixin, ParticipationClientMixin):
         # operation_id (P1c exactly-once) is NOT minted here: the client cannot
         # tell a fresh command from a transport retry. The command owner (CLI /
         # MCP) generates it once and reuses it across the retries of ONE publish.
-        body = {"title": title, "content": content,
-                "source_format": source_format,
-                "description": description,
-                "workspace_id": workspace_id,
-                "parent_id": parent_id}
-        if operation_id is not None:
-            body["operation_id"] = operation_id
-        if background is not None:
-            body["background"] = background
-        if document_kind is not None:
-            body["document_kind"] = document_kind
-        if deck_contract_version is not None:
-            body["deck_contract_version"] = deck_contract_version
-        if source_kind is not None:
-            body["source_kind"] = source_kind
-        if source_session_id is not None:
-            body["source_session_id"] = source_session_id
+        body = publish_request_body(
+            title, content, source_format, description, workspace_id,
+            parent_id, operation_id, background, document_kind,
+            deck_contract_version, source_kind, source_session_id)
         return self._request("POST", "/api/documents", body=body)
     def update(self, review_id: str, content: str, base_version_id: str,
                description: str, source_format: str | None = None,

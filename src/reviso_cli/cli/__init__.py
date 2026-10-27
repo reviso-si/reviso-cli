@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 from .. import command_journal
-from ..client import RevisoClient
+from ..client import RevisoClient, publish_request_body
 from ..document_search import search_documents
 from ..errors import ValidationError
 from ..local import canonical_review_url, read_mapping, write_mapping
@@ -17,6 +17,7 @@ from ..scope import resolve_agent_create_scope
 from .doctor import doctor_report, print_doctor
 from .auth import AuthenticatedClient, auth_command
 from .credentials import access_token, selected_server
+from .dsh_credentials import dsh_workspace
 from .oauth_http import server_origin
 from .guest_comments import add_guest_comment_commands
 from .invites import add_invite_commands
@@ -25,6 +26,33 @@ from .versions import add_version_commands, format_file_arg
 # Response blocks that are browser UI state. The human status line drops them;
 # --json keeps them.
 ACCESS_KEYS = ("effective_access", "security_policy")
+
+# The server rejects publish bodies over the same ceiling (36 MiB by default,
+# env-overridable), so failing here saves the upload and reports sizes the
+# server would.
+MAX_PUBLISH_JSON_BYTES = 37748736
+MB = 1024 * 1024
+
+
+def max_publish_json_bytes(env: dict | None = None) -> int:
+    raw = (os.environ if env is None else env).get("REVISO_MAX_PUBLISH_JSON_BYTES", "")
+    try:
+        limit = int(str(raw).strip())
+    except ValueError:
+        return MAX_PUBLISH_JSON_BYTES
+    return limit if limit > 0 else MAX_PUBLISH_JSON_BYTES
+
+
+def check_publish_size(body: dict, env: dict | None = None) -> None:
+    """Reject a publish body larger than the server's JSON ceiling."""
+    limit = max_publish_json_bytes(env)
+    size = len(json.dumps(body).encode("utf-8"))
+    if size <= limit:
+        return
+    raise ValidationError(
+        f"publish payload is {size / MB:.1f} MB, over the {limit / MB:.1f} MB "
+        "limit set by REVISO_MAX_PUBLISH_JSON_BYTES. Reduce embedded images or "
+        "reference uploaded assets instead of inlining them.")
 
 
 def _load_config() -> dict:
@@ -71,6 +99,9 @@ def cmd_publish(args: argparse.Namespace) -> None:
         parts.extend([kind or "", contract or "",
                       source_kind or "", source_session_id or ""])
     op = command_journal.operation_id_for("publish", parts)
+    check_publish_size(publish_request_body(
+        title, content, fmt, args.description, scope.workspace_id,
+        scope.parent_id, operation_id=op, **options))
     result = _client().publish(title, content, fmt, args.description,
                                scope.workspace_id, scope.parent_id,
                                operation_id=op, **options)
@@ -205,7 +236,8 @@ def _workspace_scope(explicit: str = "", parent_id: str = ""):
     key = _automation_key(cfg)
     return resolve_agent_create_scope(
         explicit_workspace_id=explicit, explicit_parent_id=parent_id,
-        config=cfg, has_automation_key=bool(key))
+        config=cfg, dsh_workspace_id=dsh_workspace(),
+        has_automation_key=bool(key))
 
 
 def _add_basic(sub: argparse._SubParsersAction) -> None:
