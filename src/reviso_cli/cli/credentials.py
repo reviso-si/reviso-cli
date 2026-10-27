@@ -1,10 +1,19 @@
 """Resolve and refresh only the credentials belonging to the selected origin."""
 import os
 import time
+from datetime import datetime
 
 from ..origin import DEFAULT_SERVER_URL
 from .credential_file import credential_lock, read_credentials, write_credentials
-from .dsh_credentials import SERVER_REF, TOKEN_REF, read_dsh_refs
+from .dsh_credentials import (
+    EXPIRES_REF,
+    SERVER_REF,
+    TOKEN_REF,
+    dsh_credential_path,
+    dsh_expires_at,
+    dsh_token_expired,
+    read_dsh_refs,
+)
 from .oauth_http import OAuthFailure, oauth_json, server_origin
 
 LOGIN_HINT = "Run reviso auth login --server https://reviso.work (or your configured server)."
@@ -42,14 +51,34 @@ def dsh_token(server: str) -> str:
 
     The host stores one connection's refs together; when the file records no
     origin the token pairs with the hosted default, mirroring the host's own
-    fallback. It is never handed to a different origin.
+    fallback. It is never handed to a different origin, and an expired token
+    resolves to '' so a dead credential is never sent.
     """
     refs = read_dsh_refs()
     token = refs.get(TOKEN_REF, "")
-    if not token:
+    if not token or dsh_token_expired(refs):
         return ""
     paired = dsh_server() or DEFAULT_SERVER_URL
     return token if server.rstrip("/") == paired else ""
+
+
+def _fail_expired_dsh(server: str) -> None:
+    """Name the dead DSH credential instead of failing as an opaque 401."""
+    refs = read_dsh_refs()
+    if not refs.get(TOKEN_REF, ""):
+        return
+    paired = dsh_server() or DEFAULT_SERVER_URL
+    if server.rstrip("/") != paired:
+        return
+    expires = dsh_expires_at(refs)
+    if expires is None or time.time() < expires:
+        return
+    expired_at = datetime.fromtimestamp(expires).astimezone().isoformat(timespec="seconds")
+    raise SystemExit(
+        f"DSH host credential {dsh_credential_path()} holds an expired Reviso "
+        f"token for {paired} ({EXPIRES_REF} {expired_at}, local time). "
+        "Reconnect the Reviso connection in DSH, or export "
+        "REVISO_AUTOMATION_KEY.")
 
 
 def access_token(server: str, legacy: dict) -> str:
@@ -58,7 +87,10 @@ def access_token(server: str, legacy: dict) -> str:
         return explicit
     server = server.rstrip("/")
     if server not in read_credentials().get("servers", {}):
-        return legacy_token(legacy, server) or dsh_token(server)
+        token = legacy_token(legacy, server) or dsh_token(server)
+        if not token:
+            _fail_expired_dsh(server)
+        return token
     with credential_lock():
         data = read_credentials()
         entry = data.get("servers", {}).get(server, {})

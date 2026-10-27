@@ -42,6 +42,30 @@ def publish_request_body(title: str, content: str,
     return body
 
 
+def update_request_body(content: str, base_version_id: str, description: str,
+                        source_format: str | None = None,
+                        agent_name: str = "Agent",
+                        operation_id: str | None = None,
+                        background: list[dict] | None = None,
+                        document_kind: str | None = None,
+                        deck_contract_version: str | None = None) -> dict:
+    # The exact JSON body an agent-update sends. Callers that need to reason
+    # about the request before it is sent (the CLI size preflight) build this
+    # same object instead of re-deriving it.
+    body = {"content": content, "base_version_id": base_version_id,
+            "description": description, "source_format": source_format,
+            "agent_name": agent_name}
+    if operation_id is not None:
+        body["operation_id"] = operation_id
+    if background is not None:
+        body["background"] = background
+    if document_kind is not None:
+        body["document_kind"] = document_kind
+    if deck_contract_version is not None:
+        body["deck_contract_version"] = deck_contract_version
+    return body
+
+
 class RevisoClient(CollabClientMixin, ParticipationClientMixin):
     def __init__(self, server_url: str,
                  owner_api_key: str | None = None):
@@ -91,17 +115,9 @@ class RevisoClient(CollabClientMixin, ParticipationClientMixin):
                background: list[dict] | None = None,
                document_kind: str | None = None,
                deck_contract_version: str | None = None) -> dict:
-        body = {"content": content, "base_version_id": base_version_id,
-                "description": description, "source_format": source_format,
-                "agent_name": agent_name}
-        if operation_id is not None:
-            body["operation_id"] = operation_id
-        if background is not None:
-            body["background"] = background
-        if document_kind is not None:
-            body["document_kind"] = document_kind
-        if deck_contract_version is not None:
-            body["deck_contract_version"] = deck_contract_version
+        body = update_request_body(
+            content, base_version_id, description, source_format, agent_name,
+            operation_id, background, document_kind, deck_contract_version)
         return self._request("POST", f"/api/documents/{review_id}/agent-update", body=body)
     def patch_sections(self, review_id: str, ops: list[dict],
                        base_version_id: str, base_content_hash: str,

@@ -386,6 +386,39 @@ def test_update_cli_requires_base_without_force_and_force_reads_fresh_version(se
     assert server.calls[-1]['body']['base_version_id'] == 'ver_latest'
 
 
+def test_update_cli_preflights_the_agent_update_body(server, monkeypatch, tmp_path):
+    from reviso_cli import cli
+
+    monkeypatch.setenv('REVISO_SERVER', f'http://127.0.0.1:{server.server_port}')
+    monkeypatch.setenv('REVISO_AUTOMATION_KEY', 'test-automation')
+    monkeypatch.setenv('REVISO_STATE_DIR', str(tmp_path / 'state'))
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
+    monkeypatch.setenv('REVISO_MAX_PUBLISH_JSON_BYTES', '2048')
+    file = tmp_path / 'draft.md'
+    file.write_text('# Revised ' * 500)
+    with pytest.raises(SystemExit, match='REVISO_MAX_PUBLISH_JSON_BYTES'):
+        cli.main(['update', 'doc_1', str(file), '--description', 'Revise',
+                  '--base-version-id', 'ver_1'])
+    assert server.calls == []
+
+
+def test_update_preflight_measures_the_bytes_the_client_sends(server):
+    from reviso_cli.cli.preflight import check_publish_size
+    from reviso_cli.client import update_request_body
+    from reviso_cli.errors import ValidationError
+
+    _client(server).update("doc_1", "# Body", "ver_1", "Fix typo",
+                           "markdown", "Agent", operation_id="op_1")
+    sent = server.calls[-1]["body"]
+    assert sent == update_request_body(
+        "# Body", "ver_1", "Fix typo", "markdown", "Agent", operation_id="op_1")
+    exact = len(json.dumps(sent).encode("utf-8"))
+    env = {"REVISO_MAX_PUBLISH_JSON_BYTES": str(exact)}
+    check_publish_size(sent, env)
+    with pytest.raises(ValidationError):
+        check_publish_size(sent, {**env, "REVISO_MAX_PUBLISH_JSON_BYTES": str(exact - 1)})
+
+
 def test_rollback_cli_requires_base_and_sends_explicit_cas(server, monkeypatch, tmp_path):
     from reviso_cli import cli
 
@@ -403,6 +436,26 @@ def test_rollback_cli_requires_base_and_sends_explicit_cas(server, monkeypatch, 
               '--base-version-id', 'ver_latest'])
     assert [call['path'] for call in server.calls] == ['/api/documents/doc_1/rollback']
     assert server.calls[-1]['body']['base_version_id'] == 'ver_latest'
+
+
+def test_publish_cli_sends_empty_content_unchanged(server, monkeypatch, tmp_path, capsys):
+    """Pins current behavior: an empty draft is published as-is, not rejected."""
+    from reviso_cli import cli
+
+    origin = f'http://127.0.0.1:{server.server_port}'
+    monkeypatch.setenv('REVISO_SERVER', origin)
+    monkeypatch.setenv('REVISO_AUTOMATION_KEY', 'test-automation')
+    monkeypatch.setenv('REVISO_STATE_DIR', str(tmp_path / 'state'))
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
+    monkeypatch.delenv('DSH_SESSION_ID', raising=False)
+    server.routes['/api/documents'] = (
+        201, {'document_id': 'doc_000000000000', 'version_id': 'ver_1',
+              'review_url': origin + '/documents/000000000000'}, '')
+    file = tmp_path / 'empty.md'
+    file.write_text('')
+    cli.main(['publish', str(file), '--workspace-id', 'wsp_test'])
+    assert server.calls[-1]['body']['content'] == ''
+    assert capsys.readouterr().out.strip() == origin + '/documents/000000000000'
 
 
 def test_publish_retries_bind_the_explicit_deck_kind(server, monkeypatch, tmp_path):

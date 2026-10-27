@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 
 from .. import command_journal
+from ..client import update_request_body
+from .preflight import check_publish_size
 
 
 def _base_choice(args: argparse.Namespace) -> str:
@@ -50,6 +52,11 @@ def cmd_update(args: argparse.Namespace) -> None:
     entry = command_journal.reserve("update", parts, resolve=resolve)
     op = entry["operation_id"]
     base = entry["request"]["base_version_id"]
+    # Same ceiling as publish: an oversized deck is rejected here, before the
+    # body leaves the machine. Built from the shared client builder so the
+    # measured bytes are exactly what client.update sends.
+    check_publish_size(update_request_body(
+        content, base, args.description, fmt, args.agent_name, operation_id=op))
     result = client.update(args.document_id, content, base,
                            args.description, fmt,
                            args.agent_name, operation_id=op)

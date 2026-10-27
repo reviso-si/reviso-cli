@@ -5,13 +5,13 @@ import json
 
 import pytest
 
-from reviso_cli.cli import (
+from reviso_cli.cli.preflight import (
     MAX_PUBLISH_JSON_BYTES,
-    ValidationError,
     check_publish_size,
     max_publish_json_bytes,
-    publish_request_body,
 )
+from reviso_cli.client import publish_request_body
+from reviso_cli.errors import ValidationError
 
 MB = 1024 * 1024
 
