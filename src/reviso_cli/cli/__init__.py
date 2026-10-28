@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
 
 from .. import command_journal
 from ..client import RevisoClient, publish_request_body
+from ..deck_assets import asset_request, find_images, payload_summary, rewrite
 from ..document_search import search_documents
 from ..errors import ValidationError
 from ..local import canonical_review_url, read_mapping, write_mapping
@@ -52,6 +54,42 @@ def cmd_auth(args: argparse.Namespace) -> None:
     auth_command(args, _load_config())
 
 
+def _draft_content(fmt: str, title: str, kind: str | None) -> str:
+    """Small host document that can own uploaded assets before final publish."""
+    safe_title = (title.replace("&", "&amp;").replace("<", "&lt;")
+                  .replace(">", "&gt;"))
+    if fmt == "html" and kind == "html_deck":
+        return ('<div class="hr-deck" data-aspect-ratio="16:9" '
+                'data-contract-version="html-deck/1">'
+                '<section class="hr-slide" data-slide-id="s01">'
+                f'<h1>{safe_title}</h1><p>Uploading images...</p>'
+                '</section></div>')
+    if fmt == "html":
+        return f"<article><h1>{safe_title}</h1><p>Uploading images...</p></article>"
+    return "# Uploading images...\n"
+
+
+def _upload_embedded_images(client: RevisoClient, *, document_id: str,
+                            content: str, path: Path, op: str) -> str:
+    uploads = []
+    for index, image in enumerate(find_images(content)):
+        digest = hashlib.sha256(image.decoded).hexdigest()[:24]
+        extension = image.mime.split("/", 1)[1].replace("jpeg", "jpg")
+        uploaded = client.upload_image(
+            document_id,
+            **asset_request(
+                image,
+                file_name=f"{path.stem}-{index + 1}.{extension}",
+                operation_id=f"{op}-asset-{index}-{digest}"[:199],
+            ),
+        )
+        url = str(uploaded.get("url") or "")
+        if not url:
+            raise RuntimeError("image upload returned no asset URL")
+        uploads.append((image, url))
+    return rewrite(content, uploads)
+
+
 def cmd_publish(args: argparse.Namespace) -> None:
     path = Path(args.file)
     scope = _workspace_scope(args.workspace_id or "", args.parent_id or "")
@@ -73,12 +111,45 @@ def cmd_publish(args: argparse.Namespace) -> None:
         parts.extend([kind or "", contract or "",
                       source_kind or "", source_session_id or ""])
     op = command_journal.operation_id_for("publish", parts)
-    check_publish_size(publish_request_body(
-        title, content, fmt, args.description, scope.workspace_id,
-        scope.parent_id, operation_id=op, **options))
-    result = _client().publish(title, content, fmt, args.description,
-                               scope.workspace_id, scope.parent_id,
-                               operation_id=op, **options)
+    images = find_images(content)
+    if getattr(args, "dry_run", False):
+        print(json.dumps(payload_summary(content), indent=2, sort_keys=True))
+        return
+
+    client = _client()
+    if (images and kind == "html_deck"
+            and not getattr(args, "no_upload_images", False)):
+        draft_options = dict(options)
+        if kind == "html_deck":
+            draft_options["deck_contract_version"] = contract or "html-deck/1"
+        created = client.publish(
+            title, _draft_content(fmt, title, kind), fmt, args.description,
+            scope.workspace_id, scope.parent_id, operation_id=op,
+            **draft_options)
+        document_id = str(created.get("document_id") or "")
+        base_version_id = str(created.get("version_id") or "")
+        if not document_id or not base_version_id:
+            raise RuntimeError("draft create returned no document/version id")
+        final_content = _upload_embedded_images(
+            client, document_id=document_id, content=content, path=path, op=op)
+        result = client.update(
+            document_id, final_content, base_version_id, args.description,
+            source_format=fmt, operation_id=f"{op}-final"[:199],
+            deck_contract_version=draft_options.get("deck_contract_version"))
+        result = {
+            **result,
+            "document_id": document_id,
+            "workspace_id": result.get(
+                "workspace_id", created.get("workspace_id", scope.workspace_id)),
+            "review_url": result.get("review_url") or created.get("review_url", ""),
+        }
+    else:
+        check_publish_size(publish_request_body(
+            title, content, fmt, args.description, scope.workspace_id,
+            scope.parent_id, operation_id=op, **options))
+        result = client.publish(
+            title, content, fmt, args.description, scope.workspace_id,
+            scope.parent_id, operation_id=op, **options)
     mapping = write_mapping(result, path)
     if getattr(args, "json", False):
         print(json.dumps({
@@ -234,6 +305,10 @@ def _add_basic(sub: argparse._SubParsersAction) -> None:
     pub.add_argument("--no-source-binding", action="store_true", help="Skip the default session binding when the environment carries an agent session id.")
     pub.add_argument("--source-session-id", help="Session id within the source channel; enables session-scoped reads on the server.")
     pub.add_argument("--json", action="store_true", help="Print document_id, version_id, workspace_id, and review_url as JSON.")
+    pub.add_argument("--no-upload-images", action="store_true",
+                     help="Publish embedded data:image URIs unchanged.")
+    pub.add_argument("--dry-run", action="store_true",
+                     help="Report embedded image counts and bytes without publishing.")
     pub.set_defaults(func=cmd_publish)
     opn = sub.add_parser("open")
     opn.add_argument("document_id")

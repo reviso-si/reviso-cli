@@ -108,6 +108,17 @@ class RevisoClient(CollabClientMixin, ParticipationClientMixin):
             parent_id, operation_id, background, document_kind,
             deck_contract_version, source_kind, source_session_id)
         return self._request("POST", "/api/documents", body=body)
+    def upload_image(self, review_id: str, *, content_type: str,
+                     data_base64: str, operation_id: str,
+                     file_name: str = "image") -> dict:
+        body = {
+            "content_type": content_type,
+            "data_base64": data_base64,
+            "file_name": file_name,
+            "operation_id": operation_id,
+        }
+        return self._request(
+            "POST", f"/api/documents/{review_id}/assets", body=body)
     def update(self, review_id: str, content: str, base_version_id: str,
                description: str, source_format: str | None = None,
                agent_name: str = "Agent",

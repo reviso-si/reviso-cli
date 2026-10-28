@@ -254,6 +254,113 @@ def test_publish_json_has_stable_metadata_and_legacy_output_is_url_only(server, 
     }
 
 
+
+
+
+def test_publish_cli_uploads_data_uri_and_sends_clean_cas_update(
+        server, monkeypatch, tmp_path):
+    from reviso_cli import cli
+
+    origin = f"http://127.0.0.1:{server.server_port}"
+    monkeypatch.setenv('REVISO_SERVER', origin)
+    monkeypatch.setenv('REVISO_AUTOMATION_KEY', 'test-automation')
+    monkeypatch.setenv('REVISO_STATE_DIR', str(tmp_path / 'state'))
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
+    monkeypatch.delenv('DSH_SESSION_ID', raising=False)
+    image = (
+        'data:image/png;base64,'
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z0YQAAAAASUVORK5CYII='
+    )
+    deck = (
+        '<div class="hr-deck" data-aspect-ratio="16:9" '
+        'data-contract-version="html-deck/1">'
+        '<section class="hr-slide" data-slide-id="s01">'
+        f'<img src="{image}" alt="pixel" width="1" height="1">'
+        '</section></div>'
+    )
+    file = tmp_path / 'large-deck.html'
+    file.write_text(deck)
+    server.routes['/api/documents'] = (201, {
+        'document_id': 'doc_0123456789ab', 'version_id': 'ver_draft',
+        'workspace_id': 'wsp_server',
+        'review_url': origin + '/documents/0123456789ab',
+    }, '')
+    server.routes['/api/documents/doc_0123456789ab/assets'] = (201, {
+        'asset_id': 'ast_0123456789ab',
+        'url': '/api/documents/doc_0123456789ab/assets/ast_0123456789ab',
+    }, '')
+    server.routes['/api/documents/doc_0123456789ab/agent-update'] = (200, {
+        'version_id': 'ver_final',
+        'review_url': origin + '/documents/0123456789ab',
+    }, '')
+
+    cli.main([
+        'publish', str(file), '--workspace-id', 'wsp_test',
+        '--kind', 'html_deck', '--deck-contract-version', 'html-deck/1',
+    ])
+
+    assert [call['path'] for call in server.calls] == [
+        '/api/documents',
+        '/api/documents/doc_0123456789ab/assets',
+        '/api/documents/doc_0123456789ab/agent-update',
+    ]
+    create, upload, update = server.calls
+    assert 'data:image/' not in create['body']['content']
+    assert create['body']['document_kind'] == 'html_deck'
+    assert upload['body']['content_type'] == 'image/png'
+    assert upload['body']['operation_id'].startswith('op_')
+    assert update['body']['base_version_id'] == 'ver_draft'
+    assert update['body']['source_format'] == 'html'
+    assert 'document_kind' not in update['body']
+    assert 'data:image/' not in update['body']['content']
+    assert '/api/documents/doc_0123456789ab/assets/ast_0123456789ab' in update['body']['content']
+
+
+def test_publish_cli_no_upload_images_keeps_original_payload(
+        server, monkeypatch, tmp_path):
+    from reviso_cli import cli
+
+    origin = f"http://127.0.0.1:{server.server_port}"
+    monkeypatch.setenv('REVISO_SERVER', origin)
+    monkeypatch.setenv('REVISO_AUTOMATION_KEY', 'test-automation')
+    monkeypatch.setenv('REVISO_STATE_DIR', str(tmp_path / 'state'))
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
+    monkeypatch.delenv('DSH_SESSION_ID', raising=False)
+    file = tmp_path / 'small.html'
+    file.write_text('<img src="data:image/png;base64,AAAA" alt="x">')
+    server.routes['/api/documents'] = (201, {
+        'document_id': 'doc_0123456789ab', 'version_id': 'ver_1',
+        'review_url': origin + '/documents/0123456789ab',
+    }, '')
+
+    cli.main(['publish', str(file), '--workspace-id', 'wsp_test',
+              '--no-upload-images'])
+
+    call, = server.calls
+    assert call['path'] == '/api/documents'
+    assert call['body']['content'] == file.read_text()
+
+
+def test_publish_cli_dry_run_reports_images_without_network(
+        server, monkeypatch, tmp_path, capsys):
+    from reviso_cli import cli
+
+    monkeypatch.setenv('REVISO_SERVER', f"http://127.0.0.1:{server.server_port}")
+    monkeypatch.setenv('REVISO_AUTOMATION_KEY', 'test-automation')
+    monkeypatch.setenv('REVISO_STATE_DIR', str(tmp_path / 'state'))
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
+    monkeypatch.delenv('DSH_SESSION_ID', raising=False)
+    file = tmp_path / 'dry.html'
+    file.write_text('<img src="data:image/png;base64,AAAA" alt="x">')
+
+    cli.main(['publish', str(file), '--workspace-id', 'wsp_test', '--dry-run'])
+
+    report = json.loads(capsys.readouterr().out)
+    assert report['image_count'] == 1
+    assert report['encoded_bytes'] == 4
+    assert server.calls == []
+
+
 def test_open_uses_saved_server_canonical_url_not_api_origin(
         server, monkeypatch, tmp_path, capsys):
     from reviso_cli import cli
