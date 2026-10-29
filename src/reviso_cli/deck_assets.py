@@ -1,8 +1,8 @@
 """Deterministic data-URI extraction and rewrite for HTML decks.
 
-The server intentionally keeps a bounded inline-data budget.  This module makes
+The server intentionally keeps a bounded inline-data budget. This module makes
 the recoverable path explicit: upload each embedded image, then replace only the
-exact URI in the deck.  It has no HTTP or CLI dependencies so DSH and MCP can
+exact URI in the deck. It has no HTTP or CLI dependencies so DSH and MCP can
 share the same rules.
 """
 
@@ -13,10 +13,16 @@ import binascii
 import re
 from dataclasses import dataclass
 
+_IMG_TAG = re.compile(r"<img\b[^>]*>", re.IGNORECASE | re.DOTALL)
+_SRC_ATTR = re.compile(
+    r"""\bsrc\s*=\s*(?:"(?P<double>[^"]*)"|'(?P<single>[^']*)'|(?P<bare>[^\s>]+))""",
+    re.IGNORECASE | re.DOTALL,
+)
 _DATA_URI = re.compile(
-    r"data:(image/(?:png|jpeg|gif|webp));base64,([A-Za-z0-9+/=]+)",
+    r"""data:(image/(?:png|jpeg|gif|webp));base64,([^\s"']*)""",
     re.IGNORECASE,
 )
+_ASSET_URL = re.compile(r"/api/documents/[^/\s]+/assets/[^/\s]+\Z")
 _ALLOWED = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 _MAX_DECODED = 5 * 1024 * 1024
 
@@ -28,37 +34,57 @@ class EmbeddedImage:
     decoded: bytes
     start: int
     end: int
+    raw_uri: str
 
     @property
     def data_uri(self) -> str:
-        return f"data:{self.mime};base64,{self.encoded}"
+        return self.raw_uri
+
+
+def _decode_image(match: re.Match[str], *, position: int) -> EmbeddedImage:
+    mime = match.group(1).lower()
+    encoded = match.group(2)
+    try:
+        decoded = base64.b64decode(encoded, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise ValueError(
+            f"embedded {mime} at byte {position} is not valid base64") from exc
+    if not decoded:
+        raise ValueError(f"embedded {mime} at byte {position} is empty")
+    if len(decoded) > _MAX_DECODED:
+        raise ValueError(
+            f"embedded {mime} at byte {position} is {len(decoded)} bytes; "
+            f"maximum upload image size is {_MAX_DECODED} bytes")
+    return EmbeddedImage(
+        mime=mime, encoded=encoded, decoded=decoded,
+        start=position, end=position + len(match.group(0)),
+        raw_uri=match.group(0),
+    )
 
 
 def find_images(content: str) -> list[EmbeddedImage]:
-    """Return valid supported image data URIs in source order.
+    """Return supported image data URIs from <img src> in source order.
 
-    Invalid, unsupported, or oversized candidates remain in the HTML and are
-    left to the existing deck validator/renderer to reject with its typed
-    contract error.  Preprocessing must never silently remove content.
+    Unsupported schemes (for example SVG) remain untouched for the deck contract
+    validator. Supported raster images that cannot be decoded or exceed the
+    upload budget fail immediately with an actionable error instead of being
+    silently left for a later, less precise failure.
     """
     if not isinstance(content, str):
         raise TypeError("deck content must be a string")
     found: list[EmbeddedImage] = []
-    for match in _DATA_URI.finditer(content):
-        mime = match.group(1).lower()
-        encoded = match.group(2)
-        if mime not in _ALLOWED:
+    for tag in _IMG_TAG.finditer(content):
+        src = _SRC_ATTR.search(tag.group(0))
+        if src is None:
             continue
-        try:
-            decoded = base64.b64decode(encoded, validate=True)
-        except (ValueError, binascii.Error):
+        group_name = "double" if src.group("double") is not None else (
+            "single" if src.group("single") is not None else "bare")
+        value = src.group(group_name)
+        data = _DATA_URI.fullmatch(value)
+        if data is None:
             continue
-        if not decoded or len(decoded) > _MAX_DECODED:
-            continue
-        found.append(EmbeddedImage(
-            mime=mime, encoded=encoded, decoded=decoded,
-            start=match.start(), end=match.end(),
-        ))
+        found.append(_decode_image(
+            data, position=tag.start() + src.start(group_name)))
     return found
 
 
@@ -88,10 +114,10 @@ def rewrite(content: str, uploads: list[tuple[EmbeddedImage, str]]) -> str:
     for image, url in uploads:
         if image.start < previous_end or image.start < 0 or image.end < image.start:
             raise ValueError("embedded image positions overlap")
-        if image.data_uri != content[image.start:image.end]:
+        if image.raw_uri != content[image.start:image.end]:
             raise ValueError("embedded image positions changed during upload")
-        if not isinstance(url, str) or not url:
-            raise ValueError("upload returned an empty asset URL")
+        if not isinstance(url, str) or not _ASSET_URL.fullmatch(url):
+            raise ValueError("upload returned an invalid asset URL")
         pieces.append(content[cursor:image.start])
         pieces.append(url)
         cursor = image.end

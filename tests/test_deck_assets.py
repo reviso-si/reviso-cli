@@ -48,3 +48,44 @@ def test_asset_request_requires_operation_id():
     image = find_images(_deck(f"data:image/png;base64,{PNG}"))[0]
     with pytest.raises(ValueError, match="operation_id"):
         asset_request(image, file_name="slide.png", operation_id="")
+
+
+def test_rewrite_preserves_uppercase_mime_spelling():
+    image_uri = f"data:IMAGE/PNG;base64,{PNG}"
+    deck = _deck(image_uri)
+    image = find_images(deck)[0]
+    assert image.mime == "image/png"
+    assert image.data_uri == image_uri
+    out = rewrite(deck, [(image, "/api/documents/doc_1/assets/ast_1")])
+    assert out == _deck("/api/documents/doc_1/assets/ast_1")
+
+
+def test_only_img_src_data_uris_are_rewritten():
+    image_uri = f"data:image/png;base64,{PNG}"
+    deck = (
+        f'<section><code>{image_uri}</code>'
+        f'<span style="background:url({image_uri})"></span>'
+        f'<img alt="x" src="{image_uri}"></section>'
+    )
+    images = find_images(deck)
+    assert len(images) == 1
+    out = rewrite(deck, [(images[0], "/api/documents/doc_1/assets/ast_1")])
+    assert out.count(image_uri) == 2
+    assert "/api/documents/doc_1/assets/ast_1" in out
+
+
+def test_supported_image_over_upload_limit_is_actionable():
+    oversized = base64.b64encode(b"x" * (5 * 1024 * 1024 + 1)).decode()
+    with pytest.raises(ValueError, match="maximum upload image size"):
+        find_images(_deck(f"data:image/png;base64,{oversized}"))
+
+
+def test_invalid_supported_base64_is_actionable():
+    with pytest.raises(ValueError, match="not valid base64"):
+        find_images(_deck("data:image/png;base64,not_base64!"))
+
+
+def test_rewrite_rejects_invalid_asset_url():
+    image = find_images(_deck(f"data:image/png;base64,{PNG}"))[0]
+    with pytest.raises(ValueError, match="invalid asset URL"):
+        rewrite(_deck(image.data_uri), [(image, "javascript:alert(1)")])
