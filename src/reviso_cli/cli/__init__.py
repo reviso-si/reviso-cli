@@ -54,6 +54,10 @@ def cmd_auth(args: argparse.Namespace) -> None:
     auth_command(args, _load_config())
 
 
+def _declared_deck(content: str) -> bool:
+    return 'class="hr-deck"' in content or "class='hr-deck'" in content
+
+
 def _draft_content(fmt: str, title: str, kind: str | None) -> str:
     """Small host document that can own uploaded assets before final publish."""
     safe_title = (title.replace("&", "&amp;").replace("<", "&lt;")
@@ -112,16 +116,18 @@ def cmd_publish(args: argparse.Namespace) -> None:
                       source_kind or "", source_session_id or ""])
     op = command_journal.operation_id_for("publish", parts)
     images = find_images(content)
+    upload_deck = fmt == "html" and (kind == "html_deck" or (kind is None and _declared_deck(content)))
     if getattr(args, "dry_run", False):
         print(json.dumps(payload_summary(content), indent=2, sort_keys=True))
         return
 
     client = _client()
-    if (images and kind == "html_deck"
+    if (images and upload_deck
             and not getattr(args, "no_upload_images", False)):
         draft_options = dict(options)
-        if kind == "html_deck":
-            draft_options["deck_contract_version"] = contract or "html-deck/1"
+        if kind is None:
+            draft_options["document_kind"] = "html_deck"
+        draft_options["deck_contract_version"] = contract or "html-deck/1"
         created = client.publish(
             title, _draft_content(fmt, title, kind), fmt, args.description,
             scope.workspace_id, scope.parent_id, operation_id=op,

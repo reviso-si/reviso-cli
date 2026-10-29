@@ -294,10 +294,7 @@ def test_publish_cli_uploads_data_uri_and_sends_clean_cas_update(
         'review_url': origin + '/documents/0123456789ab',
     }, '')
 
-    cli.main([
-        'publish', str(file), '--workspace-id', 'wsp_test',
-        '--kind', 'html_deck', '--deck-contract-version', 'html-deck/1',
-    ])
+    cli.main(['publish', str(file), '--workspace-id', 'wsp_test'])
 
     assert [call['path'] for call in server.calls] == [
         '/api/documents',
@@ -307,6 +304,7 @@ def test_publish_cli_uploads_data_uri_and_sends_clean_cas_update(
     create, upload, update = server.calls
     assert 'data:image/' not in create['body']['content']
     assert create['body']['document_kind'] == 'html_deck'
+    assert create['body']['deck_contract_version'] == 'html-deck/1'
     assert upload['body']['content_type'] == 'image/png'
     assert upload['body']['operation_id'].startswith('op_')
     assert update['body']['base_version_id'] == 'ver_draft'
