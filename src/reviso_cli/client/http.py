@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 
 from .errors import raise_for_status
 
-TIMEOUT = 30
+TIMEOUT = 200
 # An error body is an envelope, not a payload. 1 MiB is orders of magnitude
 # larger than any envelope this server emits, so a well-behaved error still
 # arrives whole and parses -- but a proxy that answers a failed request with
