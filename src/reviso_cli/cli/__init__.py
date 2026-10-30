@@ -360,7 +360,12 @@ def _add_basic(sub: argparse._SubParsersAction) -> None:
     auth.add_argument("--key")
     auth.add_argument("--no-browser", action="store_true", help="Print the login URL without opening a browser.")
     auth.set_defaults(func=cmd_auth)
-    pub = sub.add_parser("publish")
+    pub = sub.add_parser(
+        "publish",
+        help="Create a NEW document. Use `document update` to change an existing one.",
+        description="Create a new document. This always creates; it never "
+                    "updates a document with the same title. To modify an "
+                    "existing document use `reviso document update`.")
     pub.add_argument("file")
     pub.add_argument("--title")
     pub.add_argument("--format", choices=["markdown", "md", "html"])
