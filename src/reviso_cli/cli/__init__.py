@@ -1,6 +1,8 @@
 """Command line dispatcher. Every server call goes through RevisoClient."""
 from __future__ import annotations
 
+import sys
+
 import argparse
 import hashlib
 import json
@@ -21,6 +23,7 @@ from .auth import AuthenticatedClient, auth_command
 from .credentials import access_token, selected_server
 from .dsh_credentials import dsh_workspace
 from .oauth_http import server_origin
+from .deck import cmd_deck_validate
 from .preflight import check_publish_size
 from .guest_comments import add_guest_comment_commands
 from .invites import add_invite_commands
@@ -157,16 +160,42 @@ def cmd_publish(args: argparse.Namespace) -> None:
             title, content, fmt, args.description, scope.workspace_id,
             scope.parent_id, operation_id=op, **options)
     mapping = write_mapping(result, path)
+    # The server already told us this title collides with another document in
+    # the same session; dropping the hint is how an agent ends up creating
+    # eleven near-identical documents without ever noticing.
+    duplicate = result.get("duplicate_title_hint") or None
     if getattr(args, "json", False):
-        print(json.dumps({
+        payload = {
             "document_id": mapping["document_id"],
             "version_id": mapping["base_server_version_id"],
             "workspace_id": result.get("workspace_id", scope.workspace_id),
             "review_url": mapping["url"],
-        }, indent=2, sort_keys=True))
+        }
+        if duplicate:
+            payload["duplicate_title_hint"] = duplicate
+        print(json.dumps(payload, indent=2, sort_keys=True))
     else:
         print(mapping["url"])
+        if duplicate:
+            print(_duplicate_title_warning(duplicate), file=sys.stderr)
     command_journal.forget("publish", parts)
+
+
+def _duplicate_title_warning(hint: dict) -> str:
+    """Turn the server hint into the sentence an author needs to read.
+
+    The hint names the document this title collides with; when the server
+    suffixed the title it also carries the final title, which is the part that
+    explains why the new review is not called what was asked for.
+    """
+    final = hint.get("title") or hint.get("final_title") or ""
+    existing = hint.get("document_id") or ""
+    parts = ["warning: another document in this session already has this title"]
+    if existing:
+        parts.append(f"({existing})")
+    if final:
+        parts.append(f"— this one was created as {final!r}")
+    return " ".join(parts) + "."
 
 
 def _source_binding(args: argparse.Namespace) -> tuple[str | None, str | None]:
@@ -236,7 +265,9 @@ def cmd_workspaces(args: argparse.Namespace) -> None:
 
 
 def cmd_documents(args: argparse.Namespace) -> None:
-    payload = _client().dashboard(args.workspace_id or "")
+    payload = _client().dashboard(
+        args.workspace_id or "", limit=args.limit or 0,
+        offset=args.offset or 0, archived=args.archived)
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return
@@ -244,6 +275,26 @@ def cmd_documents(args: argparse.Namespace) -> None:
         status = doc.get("lifecycle_status") or ""
         print(f"{doc.get('document_id')}\t{doc.get('title')}\t"
               f"[{status}]\t{doc.get('unresolved_count')} open")
+    # The server reports has_more/next_offset; printing them turns a silently
+    # truncated list into something the user can page through.
+    if payload.get("has_more"):
+        print(f"more available: rerun with --offset {payload.get('next_offset')}")
+
+
+def cmd_document_archive(args: argparse.Namespace) -> None:
+    result = _client().archive(args.document_id)
+    print(_document_write_line("archived", args.document_id, result, args.json))
+
+
+def cmd_document_restore(args: argparse.Namespace) -> None:
+    result = _client().restore(args.document_id)
+    print(_document_write_line("restored", args.document_id, result, args.json))
+
+
+def _document_write_line(action: str, document_id: str, result: dict, as_json: bool) -> str:
+    if as_json:
+        return json.dumps(result, indent=2, sort_keys=True)
+    return f"{action} {document_id}"
 
 
 def cmd_search(args: argparse.Namespace) -> None:
@@ -291,6 +342,17 @@ def _workspace_scope(explicit: str = "", parent_id: str = ""):
         has_automation_key=bool(key))
 
 
+def _add_deck(sub: argparse._SubParsersAction) -> None:
+    deck = sub.add_parser("deck", help="Deck authoring helpers.")
+    deck_sub = deck.add_subparsers(dest="deck_cmd", required=True)
+    validate = deck_sub.add_parser(
+        "validate", help="Check a deck against the server contract without publishing.")
+    validate.add_argument("file")
+    validate.add_argument("--json", action="store_true",
+                          help="Print the full server result as JSON.")
+    validate.set_defaults(func=cmd_deck_validate, client_factory=_client)
+
+
 def _add_basic(sub: argparse._SubParsersAction) -> None:
     auth = sub.add_parser("auth")
     auth.add_argument("action", nargs="?", default="login", choices=["login", "status", "logout"])
@@ -326,10 +388,26 @@ def _add_basic(sub: argparse._SubParsersAction) -> None:
     wss = sub.add_parser("workspaces")
     wss.add_argument("--json", action="store_true")
     wss.set_defaults(func=cmd_workspaces)
-    docs = sub.add_parser("documents")
+    docs = sub.add_parser("documents", help="List documents in a workspace.")
     docs.add_argument("--workspace-id", default="")
+    docs.add_argument("--limit", type=int, default=0,
+                      help="Maximum documents to return (server default when omitted).")
+    docs.add_argument("--offset", type=int, default=0,
+                      help="Skip this many documents; page with the next_offset hint.")
+    docs.add_argument("--archived", action="store_true",
+                      help="List the recycle bin instead of active documents.")
     docs.add_argument("--json", action="store_true")
     docs.set_defaults(func=cmd_documents)
+    document = sub.add_parser("document", help="Single-document actions.")
+    document_sub = document.add_subparsers(dest="document_cmd", required=True)
+    archive = document_sub.add_parser("archive", help="Move a document to the recycle bin.")
+    archive.add_argument("document_id")
+    archive.add_argument("--json", action="store_true")
+    archive.set_defaults(func=cmd_document_archive)
+    restore = document_sub.add_parser("restore", help="Restore a document from the recycle bin.")
+    restore.add_argument("document_id")
+    restore.add_argument("--json", action="store_true")
+    restore.set_defaults(func=cmd_document_restore)
     search = sub.add_parser("search")
     search.add_argument("query")
     search.add_argument("--workspace-id", default="")
@@ -394,6 +472,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_guest_comment_commands(sub, _client)
     add_invite_commands(sub, _client)
     add_version_commands(sub, _client)
+    _add_deck(sub)
     return parser
 
 

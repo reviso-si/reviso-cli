@@ -86,6 +86,22 @@ class RevisoClient(CollabClientMixin, ParticipationClientMixin):
         return self._request("GET", "/readyz")
     def version_info(self) -> dict:
         return self._request("GET", "/version")
+    def validate_deck(self, content: str, *, source_format: str = "html",
+                      document_kind: str = "html_deck",
+                      deck_contract_version: str = "html-deck/1") -> dict:
+        """Ask the server whether this deck would pass the write-time gate.
+
+        The route is side-effect free: it creates no document or version. A
+        rejected deck comes back as ``status: "fail"`` with the same
+        diagnostics a failing publish would print, which is the whole point --
+        an author should not have to create garbage to learn what is wrong.
+        """
+        return self._request("POST", "/api/decks/validate", body={
+            "content": content,
+            "source_format": source_format,
+            "document_kind": document_kind,
+            "deck_contract_version": deck_contract_version,
+        })
     def publish(self, title: str, content: str,
                 source_format: str = "markdown",
                 description: str = "Initial draft",
