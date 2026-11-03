@@ -6,3 +6,6 @@ dist/
 .pytest_cache/
 .venv/
 .DS_Store
+
+# ci_tier local run state
+.ci-state/
