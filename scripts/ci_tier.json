@@ -1,0 +1,27 @@
+{
+  "default_tier": "quick",
+  "tiers": {
+    "quick": ["lint"],
+    "full": ["lint", "test"]
+  },
+  "stages": {
+    "lint": {
+      "command": ["python3", "-m", "ruff", "check", "src", "tests"],
+      "cwd": ".",
+      "budget": 300,
+      "watch": ["src/**/*.py", "tests/**/*.py", "pyproject.toml"],
+      "exclude": ["**/__pycache__/**", "**/.venv/**"],
+      "lane": "default"
+    },
+    "test": {
+      "command": ["python3", "-m", "pytest", "tests/", "-q"],
+      "cwd": ".",
+      "budget": 900,
+      "watch": ["src/**/*.py", "tests/**/*.py", "pyproject.toml"],
+      "exclude": ["**/__pycache__/**", "**/.venv/**"],
+      "lane": "default"
+    }
+  },
+  "max_parallel_lanes": 1,
+  "keep_runs": 5
+}
