@@ -1,0 +1,22 @@
+name: CI
+
+# Quick tier gate for pushes and PRs. The full tier stays local (see
+# scripts/ci_tier.json); release checks run in publish.yml.
+on:
+  push:
+  pull_request:
+
+jobs:
+  quick:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]"
+      - name: Quick tier
+        run: python3 scripts/ci_tier.py --tier quick
