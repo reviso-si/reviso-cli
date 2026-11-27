@@ -8,6 +8,7 @@ loop produced eleven near-identical entries and never saw why.
 import json
 
 import reviso_cli.cli as cli
+from reviso_cli.scope import CreateScope
 
 
 class _Client:
@@ -26,6 +27,7 @@ def _run_publish(tmp_path, monkeypatch, *, result, argv_extra=()):
     deck.write_text('# hello\n')
     client = _Client(result)
     monkeypatch.setattr(cli, '_client', lambda: client)
+    monkeypatch.setattr(cli, '_workspace_scope', lambda *_: CreateScope('ws_test', '', 'argument'))
     monkeypatch.setattr('reviso_cli.local.write_mapping', lambda *a, **k: {
         'document_id': 'doc_1', 'url': 'https://reviso.work/d/1',
         'base_server_version_id': 'ver_1',
